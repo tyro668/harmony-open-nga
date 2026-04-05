@@ -197,13 +197,20 @@ struct BoardListPage {
         .fontSize(18)
         .fontColor(this.isBookmarked(board) ? '#FFD700' : ThemeColors.TEXT_HINT_LIGHT)
         .width(36).height(36).textAlign(TextAlign.Center)
-        .onClick(() => { this.toggleBookmark(board); })
     }
     .width('100%').padding({ left: isSubLevel ? 48 : 32, right: 16, top: 12, bottom: 12 })
     .backgroundColor(ThemeColors.CARD_BG)
-    .onClick(() => {
-      router.pushUrl({ url: 'pages/topic/TopicListPage',
-        params: { fid: board.id, stid: board.stid, name: board.name } });
+    .onClick((event: ClickEvent) => {
+      // 检查点击位置是否在星号区域
+      const targetWidth = event.target.area.width as number;
+      if (event.x > (targetWidth - 52)) {
+        // 点击星号区域，切换收藏状态
+        this.toggleBookmark(board);
+      } else {
+        // 点击其他区域，跳转到主题列表
+        router.pushUrl({ url: 'pages/topic/TopicListPage',
+          params: { fid: board.id, stid: board.stid, name: board.name } });
+      }
     })
   }
 }
