@@ -23,6 +23,11 @@ struct TopicListPage {
   @State errorMsg: string = '';
   @State showMenu: boolean = false;
   @State isBookmarked: boolean = false;
+  @State scrollOffset: number = 0;
+  @State showRefreshHint: boolean = false;
+
+  private listScroller: Scroller = new Scroller();
+  private readonly REFRESH_THRESHOLD: number = 80;
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -286,69 +291,82 @@ struct TopicListPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        List() {
-          // 下拉刷新指示器
-          ListItem() {
-            Row() {
-              if (this.isRefreshing) {
-                LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
-                Text('刷新中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                  .margin({ left: 8 })
+        Stack() {
+          List({ scroller: this.listScroller }) {
+            ForEach(this.topics, (topic: Topic) => {
+              ListItem() {
+                this.TopicCard(topic);
+              }
+            })
+
+            if (this.hasMore) {
+              ListItem() {
+                Row() {
+                  if (this.isLoadingMore) {
+                    LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
+                    Text('加载中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                      .margin({ left: 8 })
+                  } else {
+                    Text('上拉加载更多').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  }
+                }
+                .width('100%')
+                .height(50)
+                .justifyContent(FlexAlign.Center)
+              }
+            } else if (this.topics.length > 0) {
+              ListItem() {
+                Text('\u2014 \u5DF2\u7ECF\u5230\u5E95\u4E86 \u2014')
+                  .fontSize(FontSize.SMALL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .padding(20)
               }
             }
-            .width('100%')
-            .height(this.isRefreshing ? 50 : 0)
-            .justifyContent(FlexAlign.Center)
           }
-
-          ForEach(this.topics, (topic: Topic) => {
-            ListItem() {
-              this.TopicCard(topic);
+          .layoutWeight(1)
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8 })
+          .edgeEffect(EdgeEffect.Spring)
+          .divider({ strokeWidth: 0 })
+          .onReachEnd(() => { this.loadMore(); })
+          .onScroll((scrollOffset: number, scrollState: ScrollState) => {
+            this.scrollOffset = scrollOffset;
+            // 当下拉超过阈值时显示提示
+            if (scrollOffset < -this.REFRESH_THRESHOLD && !this.isRefreshing) {
+              this.showRefreshHint = true;
+            } else if (scrollOffset >= 0) {
+              this.showRefreshHint = false;
             }
           })
-
-          if (this.hasMore) {
-            ListItem() {
-              Row() {
-                if (this.isLoadingMore) {
-                  LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
-                  Text('加载中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                    .margin({ left: 8 })
-                } else {
-                  Text('上拉加载更多').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                }
-              }
-              .width('100%')
-              .height(50)
-              .justifyContent(FlexAlign.Center)
+          .onScrollStop(() => {
+            // 停止滚动时，如果下拉足够则触发刷新
+            if (this.scrollOffset < -this.REFRESH_THRESHOLD && !this.isRefreshing) {
+              this.doRefresh();
             }
-          } else if (this.topics.length > 0) {
-            ListItem() {
-              Text('\u2014 \u5DF2\u7ECF\u5230\u5E95\u4E86 \u2014')
+            this.showRefreshHint = false;
+          })
+
+          // 下拉刷新指示器（覆盖在顶部）
+          if (this.isRefreshing || this.showRefreshHint) {
+            Row() {
+              LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
+              Text(this.isRefreshing ? '刷新中...' : '下拉刷新')
                 .fontSize(FontSize.SMALL)
                 .fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                .width('100%')
-                .textAlign(TextAlign.Center)
-                .padding(20)
+                .margin({ left: 8 })
             }
+            .width('100%')
+            .height(50)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+            .margin({ top: 8 })
           }
         }
         .layoutWeight(1)
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8 })
-        .edgeEffect(EdgeEffect.Spring)
-        .divider({ strokeWidth: 0 })
-        .onReachEnd(() => { this.loadMore(); })
-        .onScroll(() => {
-          // 滚动事件
-        })
-        .onScrollFrameBegin((offset: number) => {
-          // 检测下拉刷新：当列表在顶部且继续下拉时
-          if (offset < -50 && !this.isRefreshing && !this.isLoadingMore) {
-            this.doRefresh();
-          }
-          return { offsetRemain: offset };
-        })
+        .alignContent(Alignment.Top)
       }
     }
     .width('100%')
