@@ -1003,7 +1003,8 @@ struct ArticleListPage {
                 this.goToUserProfile(article.author.uid, article.author.username);
               })
 
-            if (article.floor === 0) {
+            // 楼主标签：楼主回复的楼层都显示
+            if (article.isAuthor) {
               Text('\u697C\u4E3B')
                 .fontSize(FontSize.EXTRA_SMALL)
                 .fontColor(ThemeColors.PRIMARY)

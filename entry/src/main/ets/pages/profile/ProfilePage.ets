@@ -27,12 +27,14 @@ struct ProfilePage {
   @State loadingState: LoadingState = LoadingState.LOADING;
   @State uid: string = '';
   @State userName: string = '';
+  /** 接口返回业务错误时的说明（仍可能展示部分资料） */
+  @State profileLoadNote: string = '';
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
     if (params != null) {
       const uidParam = params['uid'];
-      if (uidParam != null) this.uid = String(uidParam);
+      if (uidParam != null) this.uid = String(uidParam).trim();
       const nameParam = params['name'];
       if (nameParam != null) this.userName = String(nameParam);
     }
@@ -55,23 +57,90 @@ struct ProfilePage {
     return s.substring(0, 1);
   }
 
+  /** ucp 返回的 data 可能是 {"0":{...}} 或以 uid 为键的对象 */
+  private pickUserRecordFromUcpData(data: Record<string, Object>): Record<string, Object> | null {
+    if (data == null) {
+      return null;
+    }
+    if (Array.isArray(data)) {
+      const arr = data as Object[];
+      if (arr.length > 0 && arr[0] != null && typeof arr[0] === 'object') {
+        return arr[0] as Record<string, Object>;
+      }
+      return null;
+    }
+    const z = data['0'];
+    if (z != null && typeof z === 'object' && !Array.isArray(z)) {
+      return z as Record<string, Object>;
+    }
+    const keys = Object.keys(data);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (k.indexOf('__') === 0) {
+        continue;
+      }
+      const v = data[k];
+      if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+        const rec = v as Record<string, Object>;
+        if (rec['uid'] != null) {
+          return rec;
+        }
+      }
+    }
+    return null;
+  }
+
+  private isGenericNgaUidLabel(name: string): boolean {
+    const s = name != null ? name.trim() : '';
+    if (s.length === 0) {
+      return false;
+    }
+    return /^UID:?[0-9]+$/i.test(s);
+  }
+
+  /** 接口昵称可能为空；列表传入的中文名应覆盖「UID123」占位符 */
+  private applyDisplayNameFallbacks() {
+    const apiName = (this.profile.userName || '').trim();
+    const passed = (this.userName || '').trim();
+    if (passed !== '' && (apiName === '' || this.isGenericNgaUidLabel(apiName))) {
+      this.profile.userName = passed;
+      return;
+    }
+    if (apiName === '' && passed !== '') {
+      this.profile.userName = passed;
+      return;
+    }
+    if ((this.profile.userName || '').trim() === '') {
+      const u = (this.profile.uid || this.uid || '').trim();
+      this.profile.userName = u !== '' ? ('用户 ' + u) : 'NGA用户';
+    }
+  }
+
   async loadProfile() {
     this.loadingState = LoadingState.LOADING;
+    this.profileLoadNote = '';
     try {
       const response = await ngaApi.getUserProfile(this.uid);
 
       if (response.code === 200 && response.data != null) {
-        this.parseProfileData(response.data);
-        if (this.profile.userName != '') {
+        const parsedBody = this.parseProfileData(response.data);
+        if ((this.profile.uid || '').trim() === '') {
+          this.profile.uid = this.uid;
+        }
+        this.applyDisplayNameFallbacks();
+        // 只要拿到 JSON 且存在数字 UID，即展示资料页（避免「仅有 UID 占位昵称」被判失败）
+        if (parsedBody && /^\d+$/.test((this.profile.uid || this.uid).trim())) {
           this.loadingState = LoadingState.SUCCESS;
         } else {
           this.loadingState = LoadingState.ERROR;
         }
       } else {
+        this.profileLoadNote = response.message !== '' ? response.message : '网络或服务器异常';
         this.loadingState = LoadingState.ERROR;
       }
     } catch (err) {
       console.error('Load profile failed:', err);
+      this.profileLoadNote = '请求异常';
       this.loadingState = LoadingState.ERROR;
     }
   }
@@ -85,38 +154,48 @@ struct ProfilePage {
     return y + '-' + m + '-' + day;
   }
 
-  parseProfileData(jsonObj: Record<string, Object>) {
+  private ucpErrorToNote(err: Object): string {
+    if (typeof err === 'string') {
+      return err;
+    }
+    if (Array.isArray(err)) {
+      const a = err as string[];
+      return a.length > 0 && a[0] != null ? String(a[0]) : '';
+    }
+    if (typeof err === 'object') {
+      const o = err as Record<string, string>;
+      return o['0'] != null ? String(o['0']) : '';
+    }
+    return '';
+  }
+
+  parseProfileData(jsonObj: Record<string, Object>): boolean {
     try {
       const errorField = jsonObj['error'];
       if (errorField != null) {
-        console.error('Profile API error:', JSON.stringify(errorField));
-        return;
+        let note = this.ucpErrorToNote(errorField as Object);
+        const colonIdx = note.indexOf(':');
+        if (colonIdx > 0 && colonIdx <= 8) {
+          note = note.substring(colonIdx + 1);
+        }
+        this.profileLoadNote = note !== '' ? note : '无法获取用户资料';
+        console.error('Profile API error:', note);
+        return false;
       }
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
       if (data == null) {
         console.error('Profile data is null');
-        return;
+        this.profileLoadNote = '服务器未返回用户数据';
+        return false;
       }
 
-      let userData: Record<string, Object> | null = null;
-      if (Array.isArray(data)) {
-        const arr = data as Object[];
-        if (arr.length > 0 && arr[0] != null && typeof arr[0] === 'object') {
-          userData = arr[0] as Record<string, Object>;
-        }
-      } else {
-        const data0 = data['0'];
-        if (data0 != null && typeof data0 === 'object') {
-          userData = data0 as Record<string, Object>;
-        } else {
-          userData = data;
-        }
-      }
+      const userData = this.pickUserRecordFromUcpData(data);
 
       if (userData == null) {
         console.error('User data is null');
-        return;
+        this.profileLoadNote = '用户数据格式异常';
+        return false;
       }
 
       this.profile.uid = userData['uid'] != null ? String(userData['uid']) : this.uid;
@@ -126,9 +205,9 @@ struct ProfilePage {
       if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
         this.profile.userName = String(nickname);
       }
-      // 若 API 只返回 UID 格式名（如 "UID42423334"），优先使用帖子中传入的用户名
-      if (this.userName && this.profile.userName.startsWith('UID')) {
-        this.profile.userName = this.userName;
+      const passed = (this.userName || '').trim();
+      if (passed !== '' && this.isGenericNgaUidLabel(this.profile.userName)) {
+        this.profile.userName = passed;
       }
 
       this.profile.avatarUrl = userData['avatar'] != null ? String(userData['avatar']) : '';
@@ -164,8 +243,11 @@ struct ProfilePage {
 
       console.info('Parsed profile: uid=' + this.profile.uid + ', name=' + this.profile.userName +
         ', group=' + this.profile.memberGroup + ', ipLoc=' + this.profile.ipLoc);
+      return true;
     } catch (err) {
       console.error('Parse profile data failed:', err);
+      this.profileLoadNote = '资料解析失败';
+      return false;
     }
   }
 
@@ -189,6 +271,11 @@ struct ProfilePage {
       } else if (this.loadingState === LoadingState.ERROR) {
         Column() {
           Text('加载失败').fontSize(FontSize.MEDIUM).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          if (this.profileLoadNote !== '') {
+            Text(this.profileLoadNote)
+              .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              .margin({ top: 8 }).padding({ left: 24, right: 24 }).textAlign(TextAlign.Center)
+          }
           Button('重试').fontSize(FontSize.NORMAL).fontColor('#FFFFFF').backgroundColor(ThemeColors.PRIMARY)
             .borderRadius(BorderRadius.EXTRA_LARGE).height(40).padding({ left: 24, right: 24 })
             .margin({ top: 16 }).onClick(() => { this.loadProfile(); })
@@ -196,6 +283,12 @@ struct ProfilePage {
       } else {
         Scroll() {
           Column() {
+            if (this.profileLoadNote !== '') {
+              Text(this.profileLoadNote)
+                .fontSize(FontSize.SMALL).fontColor(ThemeColors.WARNING)
+                .width('100%').padding({ left: 16, right: 16, top: 8, bottom: 8 })
+                .backgroundColor(ThemeColors.TAG_BG)
+            }
             // 用户头像卡片
             Column() {
               Stack() {
@@ -213,7 +306,9 @@ struct ProfilePage {
                 .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT).margin({ top: 4 })
               if (this.profile.ipLoc != '') {
                 Text('IP 属地: ' + this.profile.ipLoc)
-                  .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT).margin({ top: 4 })
+                  .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .fontFamily(ThemeColors.FONT_FAMILY_UI)
+                  .margin({ top: 4 })
               }
             }
             .width('100%').padding(32).alignItems(HorizontalAlign.Center)
@@ -260,6 +355,7 @@ struct ProfilePage {
                   .width('100%').margin({ bottom: 8 })
                 Text(this.profile.signature)
                   .fontSize(FontSize.NORMAL).fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                  .fontFamily(ThemeColors.FONT_FAMILY_UI)
                   .width('100%')
               }
               .backgroundColor(ThemeColors.CARD_BG)
@@ -298,8 +394,10 @@ struct ProfilePage {
     Column() {
       Text(value || '0')
         .fontSize(FontSize.EXTRA_LARGE).fontWeight(FontWeight.Bold).fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+        .fontFamily(ThemeColors.FONT_FAMILY_UI)
       Text(label)
-        .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT).margin({ top: 4 })
+        .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT).fontFamily(ThemeColors.FONT_FAMILY_UI)
+        .margin({ top: 4 })
     }
     .layoutWeight(1).alignItems(HorizontalAlign.Center)
   }
@@ -308,8 +406,10 @@ struct ProfilePage {
   InfoRow(label: string, value: string) {
     Row() {
       Text(label).fontSize(FontSize.NORMAL).fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+        .fontFamily(ThemeColors.FONT_FAMILY_UI)
       Blank()
       Text(value || '-').fontSize(FontSize.NORMAL).fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+        .fontFamily(ThemeColors.FONT_FAMILY_UI)
     }
     .width('100%').height(48).padding({ left: 16, right: 16 })
   }

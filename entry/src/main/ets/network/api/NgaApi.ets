@@ -898,6 +898,14 @@ export class NgaApi {
               }
             }
 
+            // 判断是否为楼主
+            if (threadAuthorId !== '' && article.author.uid === threadAuthorId) {
+              article.isAuthor = true;
+            } else if (isFirstPost) {
+              // 第一楼肯定是楼主
+              article.isAuthor = true;
+            }
+
             const score = item['score'];
             if (score != null) {
               const scoreNum = Number(score);
@@ -1121,7 +1129,13 @@ export class NgaApi {
     const result = new HttpResponse<Record<string, Object>>();
 
     try {
-      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&uid=' + uid;
+      const uidClean = String(uid).trim();
+      if (uidClean === '' || !/^\d+$/.test(uidClean)) {
+        result.code = 400;
+        result.message = 'UID 无效';
+        return result;
+      }
+      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&uid=' + encodeURIComponent(uidClean);
       console.info('getUserProfile URL: ' + url);
 
       const response = await this.http.getGbk(url);
@@ -1134,8 +1148,15 @@ export class NgaApi {
         if (js.indexOf(jsPrefix) === 0) {
           js = js.substring(jsPrefix.length);
         }
-        const jsonObj: Record<string, Object> = JSON.parse(js);
-        result.data = jsonObj;
+        try {
+          const jsonObj: Record<string, Object> = JSON.parse(js);
+          result.data = jsonObj;
+        } catch (_pe) {
+          result.code = 502;
+          result.message = '资料内容解析失败';
+        }
+      } else if (response.code === 200) {
+        result.message = '服务器返回空数据';
       }
     } catch (err) {
       console.error('getUserProfile failed:', err);

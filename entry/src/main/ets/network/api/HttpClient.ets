@@ -1,6 +1,19 @@
 import http from '@ohos.net.http';
 import { util } from '@kit.ArkTS';
 
+/** decodeToString 第二参数（ArkTS 禁止未声明类型的对象字面量） */
+class TextDecoderDecodeOptions {
+  stream: boolean = false;
+}
+
+/**
+ * HarmonyOS TextDecoder 在部分 API 上提供 decodeToString，用于整包 GBK 解码；
+ * 类型声明中可能未写出，此处单独声明以便整包解码（避免 decodeWithStream 中文乱码）。
+ */
+interface TextDecoderGbExt {
+  decodeToString(input: Uint8Array, options?: TextDecoderDecodeOptions): string;
+}
+
 /**
  * HTTP响应
  */
@@ -87,7 +100,7 @@ export class HttpClient {
         }
         cs = cs.replace(/"/g, '').toLowerCase();
         if (cs === 'gbk' || cs === 'gb2312' || cs === 'gb18030') {
-          charset = 'gbk';
+          return this.decodeGbFamilyBuffer(buffer);
         }
       }
     }
@@ -97,6 +110,30 @@ export class HttpClient {
     } catch (_e) {
       const utf8 = util.TextDecoder.create('utf-8');
       return utf8.decodeWithStream(new Uint8Array(buffer));
+    }
+  }
+
+  /**
+   * NGA ucp 等接口正文为 GBK；优先 GB18030 再 GBK，并用 decodeToString 一次性解码。
+   */
+  private decodeGbFamilyBuffer(buffer: ArrayBuffer): string {
+    const u8 = new Uint8Array(buffer);
+    const decodeOnceOpts: TextDecoderDecodeOptions = new TextDecoderDecodeOptions();
+    decodeOnceOpts.stream = false;
+    const names: string[] = ['gb18030', 'gbk'];
+    for (let i = 0; i < names.length; i++) {
+      try {
+        const dec = util.TextDecoder.create(names[i]) as TextDecoderGbExt;
+        return dec.decodeToString(u8, decodeOnceOpts);
+      } catch (_e) {
+        continue;
+      }
+    }
+    const fallback = util.TextDecoder.create('gbk');
+    try {
+      return (fallback as TextDecoderGbExt).decodeToString(u8, decodeOnceOpts);
+    } catch (_e2) {
+      return fallback.decodeWithStream(u8);
     }
   }
 
@@ -204,8 +241,7 @@ export class HttpClient {
       response.code = httpResponse.responseCode;
 
       if (httpResponse.result instanceof ArrayBuffer) {
-        const decoder = util.TextDecoder.create('gbk');
-        const decoded = decoder.decodeWithStream(new Uint8Array(httpResponse.result));
+        const decoded = this.decodeGbFamilyBuffer(httpResponse.result);
         response.message = 'Success';
         response.raw = decoded;
         response.data = decoded;
