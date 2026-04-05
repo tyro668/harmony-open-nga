@@ -79,15 +79,21 @@ export class HttpClient {
         fullUrl = this.baseUrl + url;
       }
 
+      const headerMap: Record<string, string> = {
+        'User-Agent': HttpClient.UA,
+        'Accept': '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'X-User-Agent': 'Nga_Official',
+        'Cookie': this.cookie
+      };
+
+      if (method === http.RequestMethod.POST) {
+        headerMap['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
+
       const options: http.HttpRequestOptions = {
         method: method,
-        header: {
-          'User-Agent': HttpClient.UA,
-          'Accept': '*/*',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-          'X-User-Agent': 'Nga_Official',
-          'Cookie': this.cookie
-        },
+        header: headerMap,
         connectTimeout: 30000,
         readTimeout: 30000
       };

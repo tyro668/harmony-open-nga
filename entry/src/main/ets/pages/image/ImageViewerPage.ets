@@ -4,6 +4,8 @@ import photoAccessHelper from '@ohos.file.photoAccessHelper';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
 import promptAction from '@ohos.promptAction';
+import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
+import { BusinessError } from '@ohos.base';
 
 @Entry
 @Component
@@ -30,10 +32,54 @@ struct ImageViewerPage {
     }
   }
 
+  async requestWritePermission(): Promise<boolean> {
+    const permission: Permissions = 'ohos.permission.WRITE_IMAGEVIDEO';
+    const atManager = abilityAccessCtrl.createAtManager();
+    const context = getContext(this);
+
+    try {
+      const grantStatus = await atManager.checkAccessToken(
+        context.applicationInfo.accessTokenId, permission
+      );
+      if (grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      }
+    } catch (e) {
+      console.info('checkAccessToken not available, requesting directly');
+    }
+
+    try {
+      const result = await atManager.requestPermissionsFromUser(
+        context, [permission]
+      );
+      if (result.authResults.length > 0 && result.authResults[0] === 0) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      const bizErr = err as BusinessError;
+      console.error('requestPermission failed:', bizErr.code, bizErr.message);
+      return false;
+    }
+  }
+
   async saveImageToGallery() {
     if (this.isSaving || this.currentIndex >= this.imageUrls.length) return;
     this.isSaving = true;
     this.saveMessage = '';
+
+    const hasPermission = await this.requestWritePermission();
+    if (!hasPermission) {
+      this.isSaving = false;
+      this.saveMessage = '\u672A\u83B7\u5F97\u76F8\u518C\u5199\u5165\u6743\u9650\uFF0C\u8BF7\u5728\u7CFB\u7EDF\u8BBE\u7F6E\u4E2D\u5F00\u542F';
+      try {
+        promptAction.showToast({ message: this.saveMessage, duration: 2500 });
+      } catch (e) {
+        console.info('Toast:', this.saveMessage);
+      }
+      this.showSaveDialog = false;
+      return;
+    }
 
     const imageUrl = this.imageUrls[this.currentIndex];
 
@@ -74,7 +120,7 @@ struct ImageViewerPage {
           this.saveMessage = '\u4FDD\u5B58\u6210\u529F';
         } catch (saveErr) {
           console.error('Save to gallery failed:', JSON.stringify(saveErr));
-          this.saveMessage = '\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6743\u9650';
+          this.saveMessage = '\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5';
         }
       } else {
         this.saveMessage = '\u56FE\u7247\u4E0B\u8F7D\u5931\u8D25';

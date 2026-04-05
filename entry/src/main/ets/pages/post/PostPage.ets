@@ -39,19 +39,64 @@ struct PostPage {
     if (this.postType === 'new' && this.subject.trim() === '') return;
     this.isPosting = true;
     try {
-      const http = HttpClient.getInstance();
-      let url = '/nuke.php?__lib=topic_post&__act=topic_post';
+      const httpClient = HttpClient.getInstance();
+
+      const bodyParts: string[] = [];
+      bodyParts.push('step=2');
+
       if (this.postType === 'new') {
-        url += '&action=new&fid=' + this.fid + '&subject=' + encodeURIComponent(this.subject);
+        bodyParts.push('action=new');
+        bodyParts.push('fid=' + this.fid);
+        bodyParts.push('post_subject=' + encodeURIComponent(this.subject));
       } else if (this.postType === 'reply') {
-        url += '&action=reply&tid=' + this.tid;
+        bodyParts.push('action=reply');
+        bodyParts.push('tid=' + this.tid);
       } else {
-        url += '&action=modify&tid=' + this.tid + '&pid=' + this.pid;
+        bodyParts.push('action=modify');
+        bodyParts.push('tid=' + this.tid);
+        bodyParts.push('pid=' + this.pid);
       }
-      url += '&content=' + encodeURIComponent(this.content);
-      if (this.isAnonymous) url += '&anonymous=1';
-      const response = await http.get(url);
-      if (response.code === 200) router.back();
+
+      bodyParts.push('post_content=' + encodeURIComponent(this.content));
+      if (this.isAnonymous) bodyParts.push('anony=1');
+
+      const postBody = bodyParts.join('&');
+      const response = await httpClient.post('/post.php?__output=11', postBody);
+
+      const body = response.raw || '';
+      let hasError = false;
+
+      try {
+        let jsonStr = body;
+        const prefixTag = 'window.script_muti_get_var_store=';
+        const prefixIdx = jsonStr.indexOf(prefixTag);
+        if (prefixIdx >= 0) {
+          jsonStr = jsonStr.substring(prefixIdx + prefixTag.length);
+        }
+        const jsonObj = JSON.parse(jsonStr) as Record<string, Object>;
+        const errorField = jsonObj['error'];
+        if (errorField != null) {
+          if (Array.isArray(errorField)) {
+            const errArr = errorField as Object[];
+            if (errArr.length > 0 && errArr[0] != null && String(errArr[0]) !== '') {
+              hasError = true;
+            }
+          } else if (typeof errorField === 'object') {
+            const errObj = errorField as Record<string, Object>;
+            if (errObj['0'] != null && String(errObj['0']) !== '') {
+              hasError = true;
+            }
+          }
+        }
+      } catch (e) {
+        hasError = body.indexOf('\u53D1\u8D34\u5B8C\u6BD5') < 0;
+      }
+
+      if (response.code === 200 && !hasError) {
+        router.back();
+      } else {
+        console.error('Post failed, response: ' + body.substring(0, 300));
+      }
     } catch (err) {
       console.error('Post failed:', err);
     } finally {

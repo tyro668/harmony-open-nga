@@ -2,7 +2,9 @@ import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/const
 import { Article, Attachment } from '../../model/entity/Article';
 import { ngaApi } from '../../network/api/NgaApi';
 import { NgaApi } from '../../network/api/NgaApi';
+import { HttpClient } from '../../network/api/HttpClient';
 import router from '@ohos.router';
+import promptAction from '@ohos.promptAction';
 
 class ContentSegment {
   type: string = 'text';
@@ -41,6 +43,12 @@ struct ArticleListPage {
   @State loadError: string = '';
   @State showPageJumper: boolean = false;
   @State jumpPageText: string = '';
+  @State showReplyBar: boolean = false;
+  @State replyContent: string = '';
+  @State replyToPid: string = '';
+  @State replyToFloor: number = -1;
+  @State replyToUser: string = '';
+  @State isReplying: boolean = false;
   private apiHelper: NgaApi = new NgaApi();
 
   aboutToAppear() {
@@ -155,6 +163,169 @@ struct ArticleListPage {
 
     pages.push(total);
     return pages;
+  }
+
+  openReplyTo(article: Article) {
+    this.replyToPid = article.pid;
+    this.replyToFloor = article.floor;
+    this.replyToUser = article.author.username || '\u533F\u540D';
+    this.replyContent = '';
+    this.showReplyBar = true;
+  }
+
+  openReplyToThread() {
+    this.replyToPid = '';
+    this.replyToFloor = -1;
+    this.replyToUser = '';
+    this.replyContent = '';
+    this.showReplyBar = true;
+  }
+
+  closeReplyBar() {
+    this.showReplyBar = false;
+    this.replyContent = '';
+    this.replyToPid = '';
+    this.replyToFloor = -1;
+    this.replyToUser = '';
+  }
+
+  buildQuotePrefix(article: Article): string {
+    if (!this.replyToPid || this.replyToFloor < 0) return '';
+
+    const pid = this.replyToPid;
+    const tid = this.tid;
+    const page = this.page;
+    const uid = article.author.uid || '0';
+    const name = this.replyToUser;
+    const floor = this.replyToFloor;
+    const postTime = article.getFormattedTime();
+
+    let prefix = '[quote][pid=' + pid + ',' + tid + ',' + page + ']Reply[/pid] [b]Post by [uid=' +
+      uid + ']' + name + '[/uid] (' + postTime + '):[/b]\n[/quote]\n';
+    return prefix;
+  }
+
+  async submitReply() {
+    if (this.replyContent.trim() === '' || this.isReplying) return;
+    this.isReplying = true;
+
+    try {
+      const httpClient = HttpClient.getInstance();
+
+      let fullContent = '';
+      if (this.replyToPid && this.replyToFloor >= 0) {
+        let replyArticle: Article | null = null;
+        for (let i = 0; i < this.articles.length; i++) {
+          if (this.articles[i].pid === this.replyToPid) {
+            replyArticle = this.articles[i];
+            break;
+          }
+        }
+        if (replyArticle != null) {
+          fullContent = this.buildQuotePrefix(replyArticle) + this.replyContent;
+        } else {
+          fullContent = this.replyContent;
+        }
+      } else {
+        fullContent = this.replyContent;
+      }
+
+      const bodyParts: string[] = [];
+      bodyParts.push('step=2');
+      bodyParts.push('action=reply');
+      bodyParts.push('tid=' + this.tid);
+      bodyParts.push('post_content=' + encodeURIComponent(fullContent));
+      const postBody = bodyParts.join('&');
+
+      console.info('Reply POST to /post.php?__output=11');
+      console.info('Reply POST body: ' + postBody);
+      const response = await httpClient.post('/post.php?__output=11', postBody);
+      console.info('Reply response code: ' + response.code);
+      console.info('Reply response body: ' + (response.raw || '').substring(0, 500));
+
+      if (response.code !== 200) {
+        try {
+          promptAction.showToast({ message: '\u56DE\u590D\u5931\u8D25\uFF0CHTTP ' + response.code, duration: 2000 });
+        } catch (e) {
+          console.info('Reply HTTP error');
+        }
+        return;
+      }
+
+      const body = response.raw || '';
+      let hasError = false;
+      let errMsg = '';
+
+      try {
+        let jsonStr = body;
+        const prefixTag = 'window.script_muti_get_var_store=';
+        const prefixIdx = jsonStr.indexOf(prefixTag);
+        if (prefixIdx >= 0) {
+          jsonStr = jsonStr.substring(prefixIdx + prefixTag.length);
+        }
+        const jsonObj = JSON.parse(jsonStr) as Record<string, Object>;
+        const errorField = jsonObj['error'];
+        if (errorField != null) {
+          if (Array.isArray(errorField)) {
+            const errArr = errorField as Object[];
+            if (errArr.length > 0 && errArr[0] != null && String(errArr[0]) !== '') {
+              hasError = true;
+              errMsg = String(errArr[0]);
+              const colonIdx = errMsg.indexOf(':');
+              if (colonIdx >= 0) {
+                errMsg = errMsg.substring(colonIdx + 1);
+              }
+            }
+          } else if (typeof errorField === 'object') {
+            const errObj = errorField as Record<string, Object>;
+            const e0 = errObj['0'];
+            if (e0 != null && String(e0) !== '') {
+              hasError = true;
+              errMsg = String(e0);
+              const colonIdx = errMsg.indexOf(':');
+              if (colonIdx >= 0) {
+                errMsg = errMsg.substring(colonIdx + 1);
+              }
+            }
+          }
+        }
+      } catch (parseErr) {
+        console.error('Parse reply response failed:', parseErr);
+        if (body.indexOf('\u53D1\u8D34\u5B8C\u6BD5') >= 0) {
+          hasError = false;
+        } else {
+          hasError = true;
+          errMsg = '\u54CD\u5E94\u89E3\u6790\u5931\u8D25';
+        }
+      }
+
+      if (!hasError) {
+        this.closeReplyBar();
+        const lastPage = this.totalPages;
+        this.page = lastPage;
+        this.loadArticles(false);
+        try {
+          promptAction.showToast({ message: '\u56DE\u590D\u6210\u529F', duration: 1500 });
+        } catch (e) {
+          console.info('Reply success');
+        }
+      } else {
+        try {
+          promptAction.showToast({ message: errMsg || '\u56DE\u590D\u5931\u8D25', duration: 2500 });
+        } catch (e) {
+          console.info('Reply failed: ' + errMsg);
+        }
+      }
+    } catch (err) {
+      console.error('Reply error:', err);
+      try {
+        promptAction.showToast({ message: '\u7F51\u7EDC\u9519\u8BEF', duration: 1500 });
+      } catch (e) {
+        console.info('Reply network error');
+      }
+    } finally {
+      this.isReplying = false;
+    }
   }
 
   parseContentSegments(content: string, attachments: Attachment[]): ContentSegment[] {
@@ -561,6 +732,101 @@ struct ArticleListPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       }
+
+      // 底部回复入口栏
+      if (!this.showReplyBar && this.articles.length > 0) {
+        Row() {
+          Row() {
+            Text('\u{270D}\uFE0F')
+              .fontSize(14)
+              .margin({ right: 8 })
+            Text('\u5199\u56DE\u590D...')
+              .fontSize(FontSize.NORMAL)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          }
+          .layoutWeight(1)
+          .height(38)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor(ThemeColors.SEARCH_BG)
+          .borderRadius(BorderRadius.EXTRA_LARGE)
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => {
+            this.openReplyToThread();
+          })
+        }
+        .width('100%')
+        .height(56)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(ThemeColors.SURFACE_LIGHT)
+        .alignItems(VerticalAlign.Center)
+        .shadow({ radius: 4, color: '#00000010', offsetX: 0, offsetY: -2 })
+      }
+
+      // 回复输入面板
+      if (this.showReplyBar) {
+        Column() {
+          // 回复对象提示 + 关闭
+          Row() {
+            if (this.replyToFloor >= 0) {
+              Text('\u56DE\u590D #' + this.replyToFloor + ' ' + this.replyToUser)
+                .fontSize(FontSize.SMALL)
+                .fontColor(ThemeColors.PRIMARY)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+            } else {
+              Text('\u56DE\u590D\u5E16\u5B50')
+                .fontSize(FontSize.SMALL)
+                .fontColor(ThemeColors.PRIMARY)
+                .layoutWeight(1)
+            }
+
+            Text('\u2715')
+              .fontSize(16)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              .width(32)
+              .height(32)
+              .textAlign(TextAlign.Center)
+              .onClick(() => { this.closeReplyBar(); })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 8, top: 8 })
+
+          // 输入区 + 发送
+          Row() {
+            TextArea({ placeholder: '\u8BF4\u70B9\u4EC0\u4E48...', text: this.replyContent })
+              .layoutWeight(1)
+              .height(80)
+              .fontSize(FontSize.NORMAL)
+              .backgroundColor(ThemeColors.SEARCH_BG)
+              .borderRadius(BorderRadius.NORMAL)
+              .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+              .onChange((value: string) => { this.replyContent = value; })
+
+            Column() {
+              if (this.isReplying) {
+                LoadingProgress().width(24).height(24).color(ThemeColors.PRIMARY)
+              } else {
+                Text('\u53D1\u9001')
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(this.replyContent.trim() !== '' ? '#FFFFFF' : ThemeColors.TEXT_HINT_LIGHT)
+                  .backgroundColor(this.replyContent.trim() !== '' ? ThemeColors.PRIMARY : ThemeColors.SEARCH_BG)
+                  .borderRadius(BorderRadius.EXTRA_LARGE)
+                  .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+                  .onClick(() => { this.submitReply(); })
+              }
+            }
+            .margin({ left: 8 })
+            .justifyContent(FlexAlign.Center)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 12 })
+          .alignItems(VerticalAlign.Bottom)
+        }
+        .width('100%')
+        .backgroundColor(ThemeColors.SURFACE_LIGHT)
+        .shadow({ radius: 8, color: '#00000015', offsetX: 0, offsetY: -4 })
+      }
     }
     .width('100%')
     .height('100%')
@@ -643,6 +909,9 @@ struct ArticleListPage {
           .padding({ left: 12, right: 12, top: 4, bottom: 4 })
           .borderRadius(BorderRadius.EXTRA_LARGE)
           .backgroundColor(ThemeColors.PRIMARY_LIGHT)
+          .onClick(() => {
+            this.openReplyTo(article);
+          })
       }
       .width('100%')
       .margin({ top: 12 })

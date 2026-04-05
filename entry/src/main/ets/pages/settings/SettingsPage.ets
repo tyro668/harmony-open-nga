@@ -11,8 +11,11 @@ struct SettingsPage {
   @State cacheSize: string = '0 KB';
   @State startPageIndex: number = 0;
   @State showStartPagePicker: boolean = false;
+  @State fontSizeIndex: number = 1; // 0: 更小, 1: 标准, 2: 更大
+  @State showFontSizePicker: boolean = false;
 
   private startPageOptions: string[] = ['首页', '版块', '消息', '我的'];
+  private fontSizeOptions: string[] = ['更小', '标准', '更大'];
 
   aboutToAppear() {
     const user = UserManager.getInstance().getCurrentUser();
@@ -20,6 +23,7 @@ struct SettingsPage {
       this.userName = user.getDisplayName();
     }
     this.loadStartPage();
+    this.loadFontSize();
   }
 
   async loadStartPage() {
@@ -40,6 +44,36 @@ struct SettingsPage {
       await PreferencesManager.getInstance().putString(AppConstants.PREF_START_PAGE, '' + index);
     } catch (e) {
       console.error('Save start page setting failed:', e);
+    }
+  }
+
+  async loadFontSize() {
+    try {
+      const val = await PreferencesManager.getInstance().getString(AppConstants.PREF_FONT_SIZE, 'normal');
+      if (val === 'small') {
+        this.fontSizeIndex = 0;
+      } else if (val === 'large') {
+        this.fontSizeIndex = 2;
+      } else {
+        this.fontSizeIndex = 1;
+      }
+    } catch (e) {
+      console.error('Load font size setting failed:', e);
+    }
+  }
+
+  async saveFontSize(index: number) {
+    this.fontSizeIndex = index;
+    let level = 'normal';
+    if (index === 0) {
+      level = 'small';
+    } else if (index === 2) {
+      level = 'large';
+    }
+    try {
+      await PreferencesManager.getInstance().putString(AppConstants.PREF_FONT_SIZE, level);
+    } catch (e) {
+      console.error('Save font size setting failed:', e);
     }
   }
 
@@ -101,7 +135,9 @@ struct SettingsPage {
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
               this.SettingRow('\u{1F514}', '\u6D88\u606F\u901A\u77E5', '\u5F00\u542F', () => {})
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-              this.SettingRow('\u{1F524}', '\u5B57\u4F53\u5927\u5C0F', '\u6807\u51C6', () => {})
+              this.SettingRow('\u{1F524}', '\u5B57\u4F53\u5927\u5C0F', this.fontSizeOptions[this.fontSizeIndex], () => {
+                this.showFontSizePicker = true;
+              })
             }
             .backgroundColor(ThemeColors.CARD_BG)
             .borderRadius(BorderRadius.MEDIUM)
@@ -149,6 +185,11 @@ struct SettingsPage {
       // 启动页面选择弹窗
       if (this.showStartPagePicker) {
         this.StartPagePickerDialog()
+      }
+
+      // 字体大小选择弹窗
+      if (this.showFontSizePicker) {
+        this.FontSizePickerDialog()
       }
     }
     .width('100%').height('100%')
@@ -241,6 +282,79 @@ struct SettingsPage {
       case 3: return '\u{1F464}';
       default: return '\u{1F3E0}';
     }
+  }
+
+  @Builder
+  FontSizePickerDialog() {
+    // 遮罩层
+    Column() {
+      Blank()
+        .layoutWeight(1)
+        .onClick(() => { this.showFontSizePicker = false; })
+
+      // 弹窗内容
+      Column() {
+        // 标题
+        Text('\u5B57\u4F53\u5927\u5C0F')
+          .fontSize(FontSize.LARGE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+          .width('100%')
+          .padding({ left: 20, top: 20, bottom: 12 })
+
+        Text('\u8C03\u6574\u5E94\u7528\u5185\u6587\u5B57\u7684\u663E\u793A\u5927\u5C0F')
+          .fontSize(FontSize.NORMAL)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          .width('100%')
+          .padding({ left: 20, bottom: 16 })
+
+        // 选项列表
+        ForEach(this.fontSizeOptions, (option: string, index: number) => {
+          Row() {
+            Text(option)
+              .fontSize(FontSize.MEDIUM)
+              .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+              .layoutWeight(1)
+
+            if (this.fontSizeIndex === index) {
+              Text('\u{2713}')
+                .fontSize(18)
+                .fontColor(ThemeColors.PRIMARY)
+                .fontWeight(FontWeight.Bold)
+            }
+          }
+          .width('100%')
+          .height(52)
+          .padding({ left: 20, right: 20 })
+          .backgroundColor(this.fontSizeIndex === index ? ThemeColors.PRIMARY_LIGHT : Color.Transparent)
+          .onClick(() => {
+            this.saveFontSize(index);
+            this.showFontSizePicker = false;
+          })
+
+          if (index < this.fontSizeOptions.length - 1) {
+            Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 20 })
+          }
+        })
+
+        // 取消按钮
+        Text('\u53D6\u6D88')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .height(48)
+          .margin({ top: 8 })
+          .onClick(() => { this.showFontSizePicker = false; })
+      }
+      .width('100%')
+      .backgroundColor(ThemeColors.CARD_BG)
+      .borderRadius({ topLeft: BorderRadius.EXTRA_LARGE, topRight: BorderRadius.EXTRA_LARGE })
+      .shadow({ radius: 16, color: '#00000020', offsetX: 0, offsetY: -4 })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(ThemeColors.OVERLAY_BG)
   }
 
   @Builder

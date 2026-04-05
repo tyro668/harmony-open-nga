@@ -12,7 +12,8 @@ import router from '@ohos.router';
 @Component
 struct MainPage {
   @State currentIndex: number = 0;
-  private startPageLoaded: boolean = false;
+  private tabsController: TabsController = new TabsController();
+  @State initialized: boolean = false;
   @State user: User | null = null;
   @State boardCategories: BoardCategory[] = [];
   @State topics: Topic[] = [];
@@ -35,19 +36,24 @@ struct MainPage {
       this.user = user;
     });
 
-    if (!this.startPageLoaded) {
-      this.startPageLoaded = true;
-      try {
-        const startPage = await PreferencesManager.getInstance().getString(AppConstants.PREF_START_PAGE, '0');
-        const idx = parseInt(startPage);
-        if (!isNaN(idx) && idx >= 0 && idx <= 3) {
-          this.currentIndex = idx;
+    // 加载启动页面设置
+    try {
+      const startPage = await PreferencesManager.getInstance().getString(AppConstants.PREF_START_PAGE, '0');
+      const idx = parseInt(startPage);
+      if (!isNaN(idx) && idx >= 0 && idx <= 3) {
+        this.currentIndex = idx;
+        // 使用 controller 切换 Tab
+        if (idx > 0) {
+          setTimeout(() => {
+            this.tabsController.changeIndex(idx);
+          }, 100);
         }
-      } catch (e) {
-        console.error('Load start page failed:', e);
       }
+    } catch (e) {
+      console.error('Load start page failed:', e);
     }
 
+    this.initialized = true;
     await this.loadBoards();
     await this.loadTopics();
   }
@@ -102,7 +108,7 @@ struct MainPage {
 
   build() {
     Column() {
-      Tabs({ index: this.currentIndex }) {
+      Tabs({ controller: this.tabsController }) {
         TabContent() {
           this.HomeContent();
         }.tabBar(this.TabIcon('\u{1F3E0}', '首页', 0))
