@@ -599,7 +599,9 @@ struct MainPage {
                 .width('33.33%')
               }, (boardIndex: number) => {
                 const board = boards[boardIndex];
-                return board != null ? `${rowIndex}_${board.getKey()}` : `${rowIndex}_${boardIndex}`;
+                // 直接使用属性而不是方法调用，避免 JSON 解析后的对象没有方法
+                const key = board != null && board.id != null ? `${board.id}_${board.stid}` : `${boardIndex}`;
+                return `${rowIndex}_${key}`;
               })
             }
             .width('100%')
