@@ -484,11 +484,16 @@ export class NgaApi {
         return list;
       }
 
-      const rows: number = data['__T__ROWS'] as number;
+      const tRowsThisPage: number = data['__T__ROWS'] as number;
       const rowsPerPage: number = data['__T__ROWS_PAGE'] as number;
+      const totalRowsInBoard: number = data['__ROWS'] as number;
 
-      list.totalCount = rows != null ? rows : 0;
       const tPerPage = (rowsPerPage != null && rowsPerPage > 0) ? rowsPerPage : 35;
+      if (totalRowsInBoard != null && totalRowsInBoard > 0) {
+        list.totalCount = totalRowsInBoard;
+      } else if (tRowsThisPage != null) {
+        list.totalCount = tRowsThisPage;
+      }
       list.totalPages = list.totalCount > 0 ? Math.ceil(list.totalCount / tPerPage) : 1;
 
       // __output=11 时 __T 是数组，默认/8 时是对象
@@ -533,7 +538,7 @@ export class NgaApi {
         list.topics.push(topic);
       }
 
-      list.hasMore = currentPage < list.totalPages;
+      list.hasMore = items.length > 0;
     } catch (err) {
       console.error('Parse topic list failed:', err);
       console.error('Raw response (first 500 chars):', jsonStr.substring(0, 500));

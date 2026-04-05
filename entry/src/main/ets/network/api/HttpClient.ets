@@ -83,6 +83,7 @@ export class HttpClient {
         'User-Agent': HttpClient.UA,
         'Accept': '*/*',
         'Accept-Language': 'zh-CN,zh;q=0.9',
+        'X-User-Agent': 'Nga_Official',
         'Cookie': this.cookie
       };
 

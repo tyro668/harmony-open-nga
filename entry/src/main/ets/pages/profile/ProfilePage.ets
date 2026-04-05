@@ -22,12 +22,19 @@ struct ProfilePage {
   @State profile: ProfileData = new ProfileData();
   @State loadingState: LoadingState = LoadingState.LOADING;
   @State uid: string = '';
+  @State userName: string = '';
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
     if (params != null) {
       const uidParam = params['uid'];
       if (uidParam != null) this.uid = String(uidParam);
+      const nameParam = params['name'];
+      if (nameParam != null) this.userName = String(nameParam);
+    }
+    // 如果有用户名但没有 uid，先显示用户名
+    if (this.userName != '' && this.uid == '') {
+      this.profile.userName = this.userName;
     }
     if (this.uid != '') this.loadProfile();
   }

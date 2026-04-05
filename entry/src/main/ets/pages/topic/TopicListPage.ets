@@ -53,6 +53,8 @@ struct TopicListPage {
           this.errorMsg = topicList.errorMsg;
           if (refresh) {
             this.loadingState = LoadingState.ERROR;
+          } else {
+            this.page--;
           }
           return;
         }
@@ -70,6 +72,8 @@ struct TopicListPage {
         this.errorMsg = response.message || '加载失败';
         if (refresh) {
           this.loadingState = LoadingState.ERROR;
+        } else {
+          this.page--;
         }
       }
     } catch (error) {
@@ -77,6 +81,8 @@ struct TopicListPage {
       this.errorMsg = '网络错误';
       if (refresh) {
         this.loadingState = LoadingState.ERROR;
+      } else {
+        this.page--;
       }
     } finally {
       this.isLoadingMore = false;

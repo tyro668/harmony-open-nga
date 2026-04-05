@@ -100,6 +100,15 @@ struct ArticleListPage {
     }
   }
 
+  goToUserProfile(uid: string, username: string) {
+    // 如果没有 uid，使用用户名作为参数
+    const userId = uid || username || '0';
+    router.pushUrl({
+      url: 'pages/profile/ProfilePage',
+      params: { uid: userId, name: username }
+    });
+  }
+
   async loadArticles(loadMore: boolean = false) {
     if (loadMore) {
       this.isLoadingMore = true;
@@ -895,6 +904,7 @@ struct ArticleListPage {
     Column() {
       // 作者信息
       Row() {
+        // 头像（可点击）
         Stack() {
           Circle().width(36).height(36).fill(ThemeColors.PRIMARY_LIGHT)
           Text((article.author.username || '?').substring(0, 1))
@@ -902,13 +912,20 @@ struct ArticleListPage {
             .fontColor(ThemeColors.PRIMARY)
             .fontWeight(FontWeight.Bold)
         }
+        .onClick(() => {
+          this.goToUserProfile(article.author.uid, article.author.username);
+        })
 
         Column() {
           Row() {
+            // 用户名（可点击）
             Text(article.author.username || '\u533F\u540D')
               .fontSize(FontSize.NORMAL)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+              .onClick(() => {
+                this.goToUserProfile(article.author.uid, article.author.username);
+              })
 
             if (article.floor === 0) {
               Text('\u697C\u4E3B')
