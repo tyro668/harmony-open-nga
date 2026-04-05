@@ -31,6 +31,7 @@ export class AppConstants {
   static readonly PREF_FAVORITE: string = 'pref_favorite';
   static readonly PREF_BLACKLIST: string = 'pref_blacklist';
   static readonly PREF_FILTER_KEYWORDS: string = 'pref_filter_keywords';
+  static readonly PREF_START_PAGE: string = 'pref_start_page';
 
   // 数据库名称
   static readonly DB_NAME: string = 'open_nga.db';

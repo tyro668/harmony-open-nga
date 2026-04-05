@@ -4,12 +4,15 @@ import { User } from '../../model/entity/User';
 import { BoardCategory, Board } from '../../model/entity/Board';
 import { Topic } from '../../model/entity/Topic';
 import { ngaApi } from '../../network/api/NgaApi';
+import { PreferencesManager } from '../../data/preferences/PreferencesManager';
+import { AppConstants } from '../../common/constants/AppConstants';
 import router from '@ohos.router';
 
 @Entry
 @Component
 struct MainPage {
   @State currentIndex: number = 0;
+  private startPageLoaded: boolean = false;
   @State user: User | null = null;
   @State boardCategories: BoardCategory[] = [];
   @State topics: Topic[] = [];
@@ -31,6 +34,20 @@ struct MainPage {
     userManager.setOnUserChanged((user: User | null) => {
       this.user = user;
     });
+
+    if (!this.startPageLoaded) {
+      this.startPageLoaded = true;
+      try {
+        const startPage = await PreferencesManager.getInstance().getString(AppConstants.PREF_START_PAGE, '0');
+        const idx = parseInt(startPage);
+        if (!isNaN(idx) && idx >= 0 && idx <= 3) {
+          this.currentIndex = idx;
+        }
+      } catch (e) {
+        console.error('Load start page failed:', e);
+      }
+    }
+
     await this.loadBoards();
     await this.loadTopics();
   }

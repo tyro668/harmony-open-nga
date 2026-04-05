@@ -12,6 +12,7 @@
     "pages/search/SearchPage",
     "pages/post/PostPage",
     "pages/profile/ProfilePage",
-    "pages/board/BoardListPage"
+    "pages/board/BoardListPage",
+    "pages/image/ImageViewerPage"
   ]
 }

@@ -656,6 +656,34 @@ struct ArticleListPage {
     .alignItems(HorizontalAlign.Start)
   }
 
+  collectImageUrls(segments: ContentSegment[]): string[] {
+    const urls: string[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].type === 'image' && segments[i].imageUrl) {
+        urls.push(segments[i].imageUrl);
+      }
+    }
+    return urls;
+  }
+
+  openImageViewer(imageUrls: string[], clickedUrl: string) {
+    let idx = 0;
+    for (let i = 0; i < imageUrls.length; i++) {
+      if (imageUrls[i] === clickedUrl) {
+        idx = i;
+        break;
+      }
+    }
+    const params: Record<string, Object> = {
+      'imageUrls': imageUrls as Object,
+      'currentIndex': idx as Object
+    };
+    router.pushUrl({
+      url: 'pages/image/ImageViewerPage',
+      params: params
+    });
+  }
+
   @Builder
   RichContent(article: Article) {
     Column() {
@@ -669,6 +697,11 @@ struct ArticleListPage {
               .borderRadius(BorderRadius.NORMAL)
               .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
               .margin({ top: 8, bottom: 4 })
+              .onClick(() => {
+                const segments = this.parseContentSegments(article.content, article.attachments);
+                const allImgUrls = this.collectImageUrls(segments);
+                this.openImageViewer(allImgUrls, seg.imageUrl);
+              })
           } else {
             Text(seg.text)
               .fontSize(FontSize.NORMAL)
