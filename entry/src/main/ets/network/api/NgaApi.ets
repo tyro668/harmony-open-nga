@@ -1014,6 +1014,80 @@ export class NgaApi {
     return result;
   }
 
+  private copyBoardForTabs(b: Board): Board {
+    const nb = new Board();
+    nb.id = b.id;
+    nb.stid = b.stid;
+    nb.name = b.name;
+    return nb;
+  }
+
+  private copyCategoryBoardsOnly(src: BoardCategory): BoardCategory {
+    const c = new BoardCategory();
+    c.id = src.id;
+    c.name = src.name;
+    for (let i = 0; i < src.boards.length; i++) {
+      c.boards.push(this.copyBoardForTabs(src.boards[i]));
+    }
+    return c;
+  }
+
+  /**
+   * 首页「版块」顶栏 7 大 Tab 中除「我的收藏」外的 6 段子版块数据（顺序固定）。
+   * 「闲事杂谈」为原网事杂谈去掉二次元国家地理；「国家俱乐部」仅含二次元国家地理。
+   */
+  getMainBoardTabSections(): BoardCategory[] {
+    const all = this.getDefaultBoards();
+    let other: BoardCategory | null = null;
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].id === 'other') {
+        other = all[i];
+        break;
+      }
+    }
+    const out: BoardCategory[] = [];
+
+    if (other != null) {
+      const leisure = new BoardCategory();
+      leisure.id = 'leisure';
+      leisure.name = '\u95f2\u4e8b\u6742\u8c08';
+      for (let j = 0; j < other.boards.length; j++) {
+        const b = other.boards[j];
+        if (b.id !== '-447601') {
+          leisure.boards.push(this.copyBoardForTabs(b));
+        }
+      }
+      out.push(leisure);
+    }
+
+    const pushById = (catId: string) => {
+      for (let k = 0; k < all.length; k++) {
+        if (all[k].id === catId) {
+          out.push(this.copyCategoryBoardsOnly(all[k]));
+          return;
+        }
+      }
+    };
+    pushById('riotgame');
+    pushById('bliz');
+    pushById('wow');
+    pushById('games');
+
+    const nat = new BoardCategory();
+    nat.id = 'natclub';
+    nat.name = '\u56fd\u5bb6\u4ff1\u4e50\u90e8';
+    if (other != null) {
+      for (let m = 0; m < other.boards.length; m++) {
+        const bb = other.boards[m];
+        if (bb.id === '-447601') {
+          nat.boards.push(this.copyBoardForTabs(bb));
+        }
+      }
+    }
+    out.push(nat);
+    return out;
+  }
+
   private addBoard(cat: BoardCategory, fid: string, name: string, stid: string = '0'): void {
     const b = new Board();
     b.id = fid;

@@ -1,5 +1,6 @@
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
 import { userManager } from '../../common/manager/UserManager';
+import { boardManager } from '../../common/manager/BoardManager';
 import { User } from '../../model/entity/User';
 import { BoardCategory, Board } from '../../model/entity/Board';
 import { Topic } from '../../model/entity/Topic';
@@ -16,6 +17,10 @@ struct MainPage {
   @State initialized: boolean = false;
   @State user: User | null = null;
   @State boardCategories: BoardCategory[] = [];
+  /** 版块页顶栏 6 段分类（不含「我的收藏」） */
+  @State boardSectionCategories: BoardCategory[] = [];
+  @State bookmarkBoards: Board[] = [];
+  @State boardTopTabIndex: number = 0;
   @State topics: Topic[] = [];
   @State currentFid: number = -447601;
   @State page: number = 1;
@@ -28,6 +33,7 @@ struct MainPage {
 
   onPageShow() {
     this.user = userManager.getCurrentUser();
+    this.bookmarkBoards = boardManager.getBookmarks();
   }
 
   private authorInitial(name: string): string {
@@ -72,13 +78,62 @@ struct MainPage {
 
   async loadBoards() {
     try {
+      await boardManager.init();
+      this.bookmarkBoards = boardManager.getBookmarks();
+      this.boardSectionCategories = ngaApi.getMainBoardTabSections();
       const response = await ngaApi.getForumList();
       if (response.code === 200 && response.data != null) {
         this.boardCategories = response.data;
       }
     } catch (err) {
       console.error('Load boards failed:', err);
+      this.boardSectionCategories = ngaApi.getMainBoardTabSections();
     }
+  }
+
+  private boardEntryEmoji(board: Board): string {
+    const fid = board.id;
+    if (fid === '-7') {
+      return '\u{1F37A}';
+    }
+    if (fid === '7') {
+      return '\u{1F3DB}';
+    }
+    if (fid === '321') {
+      return '\u{1F3AE}';
+    }
+    if (fid === '-447601') {
+      return '\u{1F5FA}';
+    }
+    if (fid === '-152678' || fid === '708') {
+      return '\u{1F3AF}';
+    }
+    if (fid === '459' || fid === '422') {
+      return '\u{1F525}';
+    }
+    return '\u{1F4C4}';
+  }
+
+  /** 版块网格行号 0..n-1，每行最多 3 个，严格从左到右、从上到下 */
+  private boardGridRowIndexes(boardCount: number): number[] {
+    const rows = boardCount <= 0 ? 0 : Math.ceil(boardCount / 3);
+    const out: number[] = [];
+    for (let i = 0; i < rows; i++) {
+      out.push(i);
+    }
+    return out;
+  }
+
+  private boardSlotIndexesForRow(boardCount: number, rowIndex: number): number[] {
+    const start = rowIndex * 3;
+    const out: number[] = [];
+    for (let c = 0; c < 3; c++) {
+      const idx = start + c;
+      if (idx < boardCount) {
+        out.push(idx);
+      }
+    }
+    return out;
   }
 
   async loadTopics() {
@@ -403,104 +458,267 @@ struct MainPage {
 
   // ==================== 版块 ====================
   @Builder
+  BoardTopTabBar(index: number, title: string) {
+    Column() {
+      Text(title)
+        .fontSize(12)
+        .fontColor(this.boardTopTabIndex === index ? ThemeColors.PRIMARY : ThemeColors.ICON_INACTIVE)
+        .fontFamily(ThemeColors.FONT_FAMILY_UI)
+        .fontWeight(this.boardTopTabIndex === index ? FontWeight.Medium : FontWeight.Normal)
+      Row()
+        .width(28)
+        .height(3)
+        .backgroundColor(ThemeColors.PRIMARY)
+        .margin({ top: 6 })
+        .visibility(this.boardTopTabIndex === index ? Visibility.Visible : Visibility.Hidden)
+    }
+    .padding({ left: 10, right: 10, top: 10, bottom: 8 })
+    .justifyContent(FlexAlign.Center)
+  }
+
+  /** 版块页内层分类：横向滚动 + 点击切换，避免 Tabs/TabContent 将内容垂直居中 */
+  @Builder
+  BoardSectionTabBar() {
+    Scroll() {
+      Row() {
+        Column() {
+          this.BoardTopTabBar(0, '\u6211\u7684\u6536\u85cf');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 0;
+        })
+
+        Column() {
+          this.BoardTopTabBar(1, '\u95f2\u4e8b\u6742\u8c08');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 1;
+        })
+
+        Column() {
+          this.BoardTopTabBar(2, '\u62f3\u5934\u6e38\u620f');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 2;
+        })
+
+        Column() {
+          this.BoardTopTabBar(3, '\u66b4\u96ea\u6e38\u620f');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 3;
+        })
+
+        Column() {
+          this.BoardTopTabBar(4, '\u9b54\u517d\u4e16\u754c');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 4;
+        })
+
+        Column() {
+          this.BoardTopTabBar(5, '\u6e38\u620f\u4e13\u7248');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 5;
+        })
+
+        Column() {
+          this.BoardTopTabBar(6, '\u56fd\u5bb6\u4ff1\u4e50\u90e8');
+        }
+        .onClick(() => {
+          this.boardTopTabIndex = 6;
+        })
+      }
+      .padding({ left: 4, right: 4 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .height(48)
+    .backgroundColor(ThemeColors.SURFACE_LIGHT)
+  }
+
+  @Builder
+  BoardGridItem(board: Board) {
+    Column() {
+      Stack() {
+        Circle().width(56).height(56).fill(ThemeColors.PRIMARY_LIGHT)
+        Text(this.boardEntryEmoji(board))
+          .fontSize(28)
+      }
+      Text(board.name)
+        .fontSize(FontSize.EXTRA_SMALL)
+        .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+        .fontFamily(ThemeColors.FONT_FAMILY_UI)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Center)
+        .margin({ top: 8 })
+        .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ bottom: 4 })
+    .onClick(() => {
+      const p: Record<string, Object> = {
+        'fid': board.id,
+        'stid': board.stid,
+        'name': board.name
+      };
+      router.pushUrl({ url: 'pages/topic/TopicListPage', params: p });
+    })
+  }
+
+  @Builder
+  BoardTabPanel(boards: Board[]) {
+    if (boards.length === 0) {
+      Column() {
+        Text('\u{1F4C4}')
+          .fontSize(40)
+        Text('\u6682\u65e0\u677f\u5757')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          .margin({ top: 12 })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ top: 40 })
+    } else {
+      Scroll() {
+        Column() {
+          ForEach(this.boardGridRowIndexes(boards.length), (rowIndex: number) => {
+            Row() {
+              ForEach(this.boardSlotIndexesForRow(boards.length, rowIndex), (boardIndex: number) => {
+                Column() {
+                  this.BoardGridItem(boards[boardIndex])
+                }
+                .width('33.33%')
+              }, (boardIndex: number) => `${rowIndex}_${boards[boardIndex].getKey()}`)
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Start)
+            .margin({ bottom: 12 })
+          }, (rowIndex: number) => `board_row_${rowIndex}`)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 12, bottom: 28 })
+        .justifyContent(FlexAlign.Start)
+        .alignItems(HorizontalAlign.Start)
+        .constraintSize({ minHeight: '100%' })
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .align(Alignment.TopStart)
+    }
+  }
+
+  @Builder
+  BoardTabPanelSection(sectionIndex: number) {
+    if (sectionIndex >= 0 && sectionIndex < this.boardSectionCategories.length) {
+      this.BoardTabPanel(this.boardSectionCategories[sectionIndex].boards);
+    } else {
+      Column() {
+        Text('\u52a0\u8f7d\u4e2d\u2026')
+          .fontSize(FontSize.SMALL)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 20, top: 24 })
+    }
+  }
+
+  @Builder
+  BoardFavoritesPanel() {
+    if (this.bookmarkBoards.length === 0) {
+      Column() {
+        Text('\u{2B50}')
+          .fontSize(44)
+        Text('\u6682\u65e0\u6536\u85cf\u677f\u5757')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+          .margin({ top: 16 })
+          .fontFamily(ThemeColors.FONT_FAMILY_UI)
+        Text('\u5728\u300c\u5168\u90e8\u677f\u5757\u300d\u4e2d\u70b9\u661f\u6807\u6dfb\u52a0')
+          .fontSize(FontSize.SMALL)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          .margin({ top: 8 })
+          .fontFamily(ThemeColors.FONT_FAMILY_UI)
+        Button('\u53bb\u5168\u90e8\u677f\u5757')
+          .fontSize(FontSize.NORMAL)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ThemeColors.PRIMARY)
+          .borderRadius(0)
+          .height(40)
+          .padding({ left: 28, right: 28 })
+          .margin({ top: 20 })
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/board/BoardListPage' });
+          })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ top: 40 })
+    } else {
+      this.BoardTabPanel(this.bookmarkBoards);
+    }
+  }
+
+  @Builder
   BoardContent() {
     Column() {
-      // 顶部标题
       Row() {
-        Text('版块')
+        Text('\u677f\u5757')
           .fontSize(FontSize.TITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+          .fontFamily(ThemeColors.FONT_FAMILY_UI)
+        Blank().layoutWeight(1)
+        Text('\u5168\u90e8\u677f\u5757')
+          .fontSize(FontSize.SMALL)
+          .fontColor(ThemeColors.PRIMARY)
+          .fontFamily(ThemeColors.FONT_FAMILY_UI)
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/board/BoardListPage' });
+          })
       }
       .width('100%')
-      .height(56)
+      .height(52)
       .padding({ left: 20, right: 20 })
       .justifyContent(FlexAlign.Start)
       .alignItems(VerticalAlign.Center)
       .backgroundColor(ThemeColors.SURFACE_LIGHT)
 
-      Scroll() {
+      Column() {
+        this.BoardSectionTabBar();
+        // 用 ForEach + 随 tab 变化的 key 强制重建内容区，避免 @Builder 子树在切换时不刷新
         Column() {
-          // 快捷入口卡片
-          Row() {
-            Column() {
-              Stack() {
-                Circle().width(44).height(44).fill('#EEF2FF')
-                Text('\u{1F4CB}').fontSize(20)
-              }
-              Text('全部版块')
-                .fontSize(FontSize.SMALL)
-                .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
-                .margin({ top: 6 })
+          ForEach([this.boardTopTabIndex], (activeTab: number) => {
+            if (activeTab === 0) {
+              this.BoardFavoritesPanel();
+            } else {
+              this.BoardTabPanelSection(activeTab - 1);
             }
-            .layoutWeight(1)
-            .onClick(() => { router.pushUrl({ url: 'pages/board/BoardListPage' }); })
-
-            Column() {
-              Stack() {
-                Circle().width(44).height(44).fill('#FFF7ED')
-                Text('\u{2B50}').fontSize(20)
-              }
-              Text('收藏版块')
-                .fontSize(FontSize.SMALL)
-                .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
-                .margin({ top: 6 })
-            }
-            .layoutWeight(1)
-            .onClick(() => { router.pushUrl({ url: 'pages/board/BoardListPage' }); })
-          }
-          .width('100%')
-          .padding({ top: 16, bottom: 16 })
-          .backgroundColor(ThemeColors.CARD_BG)
-          .borderRadius(BorderRadius.MEDIUM)
-          .margin({ left: 16, right: 16, top: 12 })
-          .shadow({ radius: 4, color: '#0000000A', offsetX: 0, offsetY: 2 })
-
-          // 版块分类列表
-          ForEach(this.boardCategories, (category: BoardCategory) => {
-            Column() {
-              // 分类标题
-              Row() {
-                Rect().width(3).height(16).fill(ThemeColors.PRIMARY).borderRadius(2)
-                Text(category.name)
-                  .fontSize(FontSize.MEDIUM)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
-                  .margin({ left: 8 })
-              }
-              .width('100%')
-              .padding({ left: 20, top: 20, bottom: 10 })
-
-              // 版块列表（网格形式）
-              Flex({ wrap: FlexWrap.Wrap }) {
-                ForEach(category.boards, (board: Board) => {
-                  Text(board.name)
-                    .fontSize(FontSize.NORMAL)
-                    .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
-                    .backgroundColor(ThemeColors.CARD_BG)
-                    .borderRadius(BorderRadius.NORMAL)
-                    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-                    .margin({ left: 8, bottom: 8 })
-                    .shadow({ radius: 2, color: '#00000008', offsetX: 0, offsetY: 1 })
-                    .onClick(() => {
-                      router.pushUrl({
-                        url: 'pages/topic/TopicListPage',
-                        params: { fid: board.id, stid: board.stid, name: board.name }
-                      });
-                    })
-                })
-              }
-              .width('100%')
-              .padding({ left: 12, right: 16 })
-            }
-          })
-
-          Blank().height(20)
+          }, (activeTab: number) => `board_section_${activeTab}`)
         }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Start)
+        .alignItems(HorizontalAlign.Start)
       }
       .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
+      .width('100%')
+      .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
     }
     .width('100%')
     .height('100%')
