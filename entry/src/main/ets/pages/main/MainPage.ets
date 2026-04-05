@@ -597,7 +597,10 @@ struct MainPage {
                   this.BoardGridItem(boards[boardIndex])
                 }
                 .width('33.33%')
-              }, (boardIndex: number) => `${rowIndex}_${boards[boardIndex].getKey()}`)
+              }, (boardIndex: number) => {
+                const board = boards[boardIndex];
+                return board != null ? `${rowIndex}_${board.getKey()}` : `${rowIndex}_${boardIndex}`;
+              })
             }
             .width('100%')
             .justifyContent(FlexAlign.Start)

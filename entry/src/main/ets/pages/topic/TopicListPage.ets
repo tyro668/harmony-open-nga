@@ -18,6 +18,7 @@ struct TopicListPage {
   @State totalPages: number = 1;
   @State loadingState: LoadingState = LoadingState.LOADING;
   @State isLoadingMore: boolean = false;
+  @State isRefreshing: boolean = false;
   @State hasMore: boolean = false;
   @State errorMsg: string = '';
   @State showMenu: boolean = false;
