@@ -1,0 +1,17 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/main/MainPage",
+    "pages/login/LoginPage",
+    "pages/topic/TopicListPage",
+    "pages/article/ArticleListPage",
+    "pages/settings/SettingsPage",
+    "pages/favorite/FavoritePage",
+    "pages/history/HistoryPage",
+    "pages/notification/NotificationPage",
+    "pages/search/SearchPage",
+    "pages/post/PostPage",
+    "pages/profile/ProfilePage",
+    "pages/board/BoardListPage"
+  ]
+}
