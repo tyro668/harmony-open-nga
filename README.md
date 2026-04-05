@@ -119,12 +119,8 @@ cd harmony-open-nga
 #### 方式二：使用命令行编译
 
 ```bash
-# 编译 HAP 包
-/Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
-  /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw.js \
-  --mode module -p module=entry@default -p product=default \
-  -p requiredDeviceType=phone assembleHap \
-  --analyze=normal --parallel --incremental --daemon
+# 编译 HAP 包（单行命令，可直接复制执行）
+/Applications/DevEco-Studio.app/Contents/tools/node/bin/node /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw.js --mode module -p module=entry@default -p product=default -p requiredDeviceType=phone assembleHap --analyze=normal --parallel --incremental --daemon
 
 # 编译产物位置
 # entry/build/default/outputs/default/entry-default-*.hap
