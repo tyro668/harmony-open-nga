@@ -3,6 +3,8 @@ import { Article, Attachment } from '../../model/entity/Article';
 import { ngaApi } from '../../network/api/NgaApi';
 import { NgaApi } from '../../network/api/NgaApi';
 import { HttpClient } from '../../network/api/HttpClient';
+import { PreferencesManager } from '../../data/preferences/PreferencesManager';
+import { AppConstants } from '../../common/constants/AppConstants';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 
@@ -49,6 +51,8 @@ struct ArticleListPage {
   @State replyToFloor: number = -1;
   @State replyToUser: string = '';
   @State isReplying: boolean = false;
+  @State contentFontSize: number = 16; // 内容字体大小
+  @State titleFontSize: number = 17; // 标题字体大小
   private apiHelper: NgaApi = new NgaApi();
 
   aboutToAppear() {
@@ -63,8 +67,36 @@ struct ArticleListPage {
         this.subject = String(titleParam);
       }
     }
+    this.loadFontSize();
     if (this.tid != '') {
       this.loadArticles();
+    }
+  }
+
+  async loadFontSize() {
+    try {
+      const level = await PreferencesManager.getInstance().getString(AppConstants.PREF_FONT_SIZE, 'normal');
+      this.applyFontSize(level);
+    } catch (e) {
+      console.error('Load font size failed:', e);
+    }
+  }
+
+  applyFontSize(level: string) {
+    // 字体大小映射：small=更小, normal=标准, large=更大
+    switch (level) {
+      case 'small':
+        this.contentFontSize = 14;
+        this.titleFontSize = 15;
+        break;
+      case 'large':
+        this.contentFontSize = 18;
+        this.titleFontSize = 19;
+        break;
+      default: // normal
+        this.contentFontSize = 16;
+        this.titleFontSize = 17;
+        break;
     }
   }
 
@@ -973,9 +1005,9 @@ struct ArticleListPage {
               })
           } else {
             Text(seg.text)
-              .fontSize(FontSize.NORMAL)
+              .fontSize(this.contentFontSize)
               .fontColor(seg.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
-              .lineHeight(22)
+              .lineHeight(this.contentFontSize + 6)
               .width('100%')
           }
         },
