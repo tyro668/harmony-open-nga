@@ -716,6 +716,7 @@ export class NgaApi {
             const authorId = item['authorid'];
             if (authorId != null) {
               article.author.uid = String(authorId);
+              console.info('Parsed author uid: ' + article.author.uid);
               const userInfo = userMap.get(String(authorId));
               if (userInfo != null) {
                 const uname = userInfo['username'];

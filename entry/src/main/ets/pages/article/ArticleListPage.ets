@@ -101,11 +101,20 @@ struct ArticleListPage {
   }
 
   goToUserProfile(uid: string, username: string) {
-    // 如果没有 uid，使用用户名作为参数
-    const userId = uid || username || '0';
+    // 打印调试信息
+    console.info('goToUserProfile called with uid=' + uid + ', username=' + username);
+    
+    // 确保 uid 有效
+    let userId = uid;
+    if (userId == null || userId === '' || userId === '0') {
+      // 如果 uid 无效，尝试使用用户名
+      userId = username || '0';
+    }
+    
+    console.info('Navigating to profile with uid=' + userId);
     router.pushUrl({
       url: 'pages/profile/ProfilePage',
-      params: { uid: userId, name: username }
+      params: { uid: userId, name: username || '' }
     });
   }
 
