@@ -557,6 +557,45 @@ export class NgaApi {
   }
 
   /**
+   * 搜索帖子
+   * @param keyword 搜索关键词
+   * @param fid 板块ID (0表示全站搜索)
+   * @param stid 子板块ID
+   */
+  async searchTopics(keyword: string, fid: number = 0, stid: number = 0): Promise<HttpResponse<TopicList>> {
+    let url = this.baseUrl + '/thread.php?';
+    if (stid != 0) {
+      url = url + 'stid=' + stid;
+    } else if (fid != 0) {
+      url = url + 'fid=' + fid;
+    }
+    url = url + '&searchpost=1&key=' + encodeURIComponent(keyword) + '&page=1&lite=js&noprefix&__output=11';
+    console.info('searchTopics URL:', url);
+
+    const response = await this.http.get(url);
+    const result = new HttpResponse<TopicList>();
+    result.code = response.code;
+    result.message = response.message;
+
+    if (response.code === 200 && response.raw != null && response.raw !== '') {
+      const parsed = this.parseTopicList(response.raw, 1);
+      result.data = parsed;
+      if (parsed.errorMsg) {
+        result.message = parsed.errorMsg;
+      }
+    } else {
+      const errorList = new TopicList();
+      if (response.code !== 200) {
+        errorList.errorMsg = '请求失败 (HTTP ' + response.code + ')';
+      } else {
+        errorList.errorMsg = response.message || '服务器返回空数据';
+      }
+      result.data = errorList;
+    }
+    return result;
+  }
+
+  /**
    * 解析帖子列表
    */
   private parseTopicList(jsonStr: string, currentPage: number): TopicList {

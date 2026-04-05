@@ -1,8 +1,11 @@
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
 import { Topic } from '../../model/entity/Topic';
+import { Board } from '../../model/entity/Board';
 import { ngaApi } from '../../network/api/NgaApi';
+import { boardManager } from '../../common/manager/BoardManager';
 import { LoadingState } from '../../ui/components/CommonComponents';
 import router from '@ohos.router';
+import promptAction from '@ohos.promptAction';
 
 @Entry
 @Component
@@ -17,6 +20,8 @@ struct TopicListPage {
   @State isLoadingMore: boolean = false;
   @State hasMore: boolean = false;
   @State errorMsg: string = '';
+  @State showMenu: boolean = false;
+  @State isBookmarked: boolean = false;
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -34,7 +39,36 @@ struct TopicListPage {
         this.boardName = String(nameParam);
       }
     }
+    this.checkBookmark();
     this.loadTopics();
+  }
+
+  async checkBookmark() {
+    await boardManager.init();
+    this.isBookmarked = boardManager.isBookmark(String(this.fid), String(this.stid));
+  }
+
+  async toggleBookmark() {
+    await boardManager.init();
+    if (this.isBookmarked) {
+      await boardManager.removeBookmark(String(this.fid), String(this.stid));
+      promptAction.showToast({ message: '已取消收藏' });
+    } else {
+      const board = new Board();
+      board.id = String(this.fid);
+      board.stid = String(this.stid);
+      board.name = this.boardName;
+      await boardManager.addBookmark(board);
+      promptAction.showToast({ message: '已添加收藏' });
+    }
+    this.isBookmarked = boardManager.isBookmark(String(this.fid), String(this.stid));
+  }
+
+  goToSearch() {
+    router.pushUrl({
+      url: 'pages/search/SearchPage',
+      params: { fid: this.fid, stid: this.stid, boardName: this.boardName }
+    });
   }
 
   private authorInitial(name: string): string {
@@ -136,11 +170,71 @@ struct TopicListPage {
           .height(44)
           .textAlign(TextAlign.Center)
           .onClick(() => { this.loadTopics(); })
+
+        // 菜单按钮
+        Text('\u22EF')
+          .fontSize(20)
+          .width(44)
+          .height(44)
+          .textAlign(TextAlign.Center)
+          .onClick(() => { this.showMenu = !this.showMenu; })
       }
       .width('100%')
       .height(56)
       .padding({ left: 8, right: 8 })
       .backgroundColor(ThemeColors.SURFACE_LIGHT)
+
+      // 下拉菜单
+      if (this.showMenu) {
+        Row() {
+          Blank()
+          Column() {
+            // 收藏选项
+            Row() {
+              Text(this.isBookmarked ? '\u{2605}' : '\u{2606}')
+                .fontSize(18)
+                .fontColor(this.isBookmarked ? '#FFD700' : ThemeColors.TEXT_PRIMARY_LIGHT)
+              Text(this.isBookmarked ? '取消收藏' : '收藏板块')
+                .fontSize(FontSize.NORMAL)
+                .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                .margin({ left: 12 })
+            }
+            .width('100%')
+            .height(48)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => {
+              this.showMenu = false;
+              this.toggleBookmark();
+            })
+
+            // 分割线
+            Row().width('100%').height(1).backgroundColor(ThemeColors.DIVIDER_LIGHT)
+
+            // 搜索选项
+            Row() {
+              Text('\u{1F50D}')
+                .fontSize(18)
+              Text('板块内搜索')
+                .fontSize(FontSize.NORMAL)
+                .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                .margin({ left: 12 })
+            }
+            .width('100%')
+            .height(48)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => {
+              this.showMenu = false;
+              this.goToSearch();
+            })
+          }
+          .width(160)
+          .backgroundColor(ThemeColors.SURFACE_LIGHT)
+          .borderRadius(BorderRadius.MEDIUM)
+          .shadow({ radius: 8, color: '#0000001A', offsetX: 0, offsetY: 4 })
+          .margin({ top: 4, right: 8 })
+        }
+        .width('100%')
+      }
 
       // 内容区域
       if (this.loadingState === LoadingState.LOADING) {

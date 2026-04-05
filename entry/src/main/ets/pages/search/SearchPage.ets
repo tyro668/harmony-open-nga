@@ -13,11 +13,30 @@ struct SearchPage {
   @State searchHistory: string[] = [];
   @State loadingState: LoadingState = LoadingState.SUCCESS;
   @State hasSearched: boolean = false;
+  // 板块内搜索参数
+  @State fid: number = 0;
+  @State stid: number = 0;
+  @State boardName: string = '';
 
   private readonly MAX_HISTORY: number = 20;
   private readonly KEY_SEARCH_HISTORY: string = 'search_history';
 
   aboutToAppear() {
+    const params = router.getParams() as Record<string, Object>;
+    if (params != null) {
+      const fidParam = params['fid'];
+      if (fidParam != null) {
+        this.fid = parseInt(String(fidParam));
+      }
+      const stidParam = params['stid'];
+      if (stidParam != null) {
+        this.stid = parseInt(String(stidParam));
+      }
+      const boardNameParam = params['boardName'];
+      if (boardNameParam != null) {
+        this.boardName = String(boardNameParam);
+      }
+    }
     this.loadSearchHistory();
   }
 
@@ -54,7 +73,8 @@ struct SearchPage {
     this.hasSearched = true;
     this.loadingState = LoadingState.LOADING;
     try {
-      const response = await ngaApi.getTopicList(0, 1);
+      // 如果有板块参数，在板块内搜索
+      const response = await ngaApi.searchTopics(keyword, this.fid, this.stid);
       if (response.code === 200 && response.data != null) {
         this.topics = response.data.topics;
         this.loadingState = this.topics.length > 0 ? LoadingState.SUCCESS : LoadingState.EMPTY;
@@ -78,7 +98,7 @@ struct SearchPage {
           .textAlign(TextAlign.Center)
           .onClick(() => { router.back(); })
 
-        TextInput({ placeholder: '搜索帖子、用户...', text: this.searchText })
+        TextInput({ placeholder: this.boardName != '' ? '在 ' + this.boardName + ' 中搜索...' : '搜索帖子、用户...', text: this.searchText })
           .layoutWeight(1)
           .height(40)
           .backgroundColor(ThemeColors.SEARCH_BG)
