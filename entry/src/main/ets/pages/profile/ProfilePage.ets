@@ -43,14 +43,22 @@ struct ProfilePage {
     this.loadingState = LoadingState.LOADING;
     try {
       const http = HttpClient.getInstance();
-      const response = await http.get('/nuke.php?func=ucp&uid=' + this.uid);
-      if (response.code === 200 && response.data != null) {
+      // 使用 __output=8 格式获取用户信息
+      const response = await http.get('/nuke.php?func=ucp&uid=' + this.uid + '&__output=8');
+      console.info('Profile API response code: ' + response.code);
+      console.info('Profile API raw (first 500): ' + (response.raw || '').substring(0, 500));
+      if (response.code === 200 && response.raw != null) {
         this.parseProfile(response.raw);
-        this.loadingState = LoadingState.SUCCESS;
+        if (this.profile.userName != '') {
+          this.loadingState = LoadingState.SUCCESS;
+        } else {
+          this.loadingState = LoadingState.ERROR;
+        }
       } else {
         this.loadingState = LoadingState.ERROR;
       }
     } catch (err) {
+      console.error('Load profile failed:', err);
       this.loadingState = LoadingState.ERROR;
     }
   }
@@ -58,14 +66,34 @@ struct ProfilePage {
   parseProfile(jsonStr: string) {
     try {
       let js = jsonStr;
+      // 移除 JSONP 前缀
       if (js.indexOf('window.script_muti_get_var_store=') === 0) {
         js = js.substring('window.script_muti_get_var_store='.length);
       }
       const jsonObj: Record<string, Object> = JSON.parse(js);
+      
+      // 检查是否有错误
+      const errorField = jsonObj['error'];
+      if (errorField != null) {
+        console.error('Profile API error:', errorField);
+        return;
+      }
+      
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
-      if (data == null) return;
-      this.profile.uid = data['uid'] != null ? String(data['uid']) : '';
+      if (data == null) {
+        console.error('Profile data is null');
+        return;
+      }
+      
+      this.profile.uid = data['uid'] != null ? String(data['uid']) : this.uid;
       this.profile.userName = data['username'] != null ? String(data['username']) : '';
+      
+      // 优先使用 nickname
+      const nickname = data['nickname'];
+      if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
+        this.profile.userName = String(nickname);
+      }
+      
       this.profile.avatarUrl = data['avatar'] != null ? String(data['avatar']) : '';
       this.profile.postCount = data['postnum'] != null ? String(data['postnum']) : '0';
       this.profile.registerDate = data['regdate'] != null ? String(data['regdate']) : '';
@@ -74,8 +102,11 @@ struct ProfilePage {
       this.profile.signature = data['sign'] != null ? String(data['sign']) : '';
       this.profile.reputation = data['rvrc'] != null ? String(data['rvrc']) : '0';
       this.profile.ipLoc = data['iploc'] != null ? String(data['iploc']) : '';
+      
+      console.info('Parsed profile: uid=' + this.profile.uid + ', name=' + this.profile.userName);
     } catch (err) {
       console.error('Parse profile failed:', err);
+      console.error('Raw response:', jsonStr.substring(0, 1000));
     }
   }
 
