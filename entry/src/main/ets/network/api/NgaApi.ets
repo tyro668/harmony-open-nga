@@ -292,14 +292,20 @@ export class NgaApi {
     result.code = response.code;
     result.message = response.message;
 
-    if (response.code === 200 && response.data != null) {
+    if (response.code === 200 && response.raw != null && response.raw !== '') {
       const parsed = this.parseTopicList(response.raw, page);
       result.data = parsed;
       if (parsed.errorMsg) {
         result.message = parsed.errorMsg;
       }
     } else {
-      result.data = new TopicList();
+      const errorList = new TopicList();
+      if (response.code !== 200) {
+        errorList.errorMsg = '请求失败 (HTTP ' + response.code + ')';
+      } else {
+        errorList.errorMsg = response.message || '服务器返回空数据';
+      }
+      result.data = errorList;
     }
     return result;
   }
@@ -308,7 +314,6 @@ export class NgaApi {
    * 获取收藏帖子列表
    */
   async getFavoriteTopics(page: number): Promise<HttpResponse<TopicList>> {
-    // 收藏帖子使用 favor=1 参数
     const url = this.baseUrl + '/thread.php?favor=1&page=' + page + '&lite=js&noprefix&__output=11';
     console.info('getFavoriteTopics URL:', url);
     
@@ -317,12 +322,20 @@ export class NgaApi {
     result.code = response.code;
     result.message = response.message;
 
-    console.info('getFavoriteTopics response code:', response.code);
-    
-    if (response.code === 200 && response.data != null) {
-      result.data = this.parseTopicList(response.raw, page);
+    if (response.code === 200 && response.raw != null && response.raw !== '') {
+      const parsed = this.parseTopicList(response.raw, page);
+      result.data = parsed;
+      if (parsed.errorMsg) {
+        result.message = parsed.errorMsg;
+      }
     } else {
-      result.data = new TopicList();
+      const errorList = new TopicList();
+      if (response.code !== 200) {
+        errorList.errorMsg = '请求失败 (HTTP ' + response.code + ')';
+      } else {
+        errorList.errorMsg = response.message || '服务器返回空数据';
+      }
+      result.data = errorList;
     }
     return result;
   }
@@ -349,12 +362,18 @@ export class NgaApi {
         let errMsg = '';
         if (Array.isArray(errorField)) {
           const arr = errorField as string[];
-          if (arr.length > 0) errMsg = String(arr[0]);
+          if (arr.length > 0 && arr[0] != null) errMsg = String(arr[0]);
+        } else if (typeof errorField === 'string') {
+          errMsg = errorField as string;
         } else if (typeof errorField === 'object') {
           const obj = errorField as Record<string, string>;
           errMsg = obj['0'] || '';
         }
         if (errMsg) {
+          const colonIdx = errMsg.indexOf(':');
+          if (colonIdx > 0 && colonIdx <= 3) {
+            errMsg = errMsg.substring(colonIdx + 1);
+          }
           list.errorMsg = errMsg;
           console.error('Topic list API error:', errMsg);
           return list;
@@ -363,11 +382,13 @@ export class NgaApi {
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
       if (data == null) {
+        list.errorMsg = '服务器返回数据为空';
         return list;
       }
 
       const tField: Object = data['__T'];
       if (tField == null) {
+        list.errorMsg = '帖子列表数据为空';
         return list;
       }
 
@@ -423,6 +444,8 @@ export class NgaApi {
       list.hasMore = currentPage < list.totalPages;
     } catch (err) {
       console.error('Parse topic list failed:', err);
+      console.error('Raw response (first 500 chars):', jsonStr.substring(0, 500));
+      list.errorMsg = '列表解析失败';
     }
 
     return list;
@@ -433,19 +456,26 @@ export class NgaApi {
    */
   async getArticleList(tid: string, page: number): Promise<HttpResponse<ArticleList>> {
     const url = this.baseUrl + '/read.php?tid=' + tid + '&page=' + page + '&__output=11&noprefix&v2';
+    console.info('getArticleList URL:', url);
     const response = await this.http.get(url);
     const result = new HttpResponse<ArticleList>();
     result.code = response.code;
     result.message = response.message;
 
-    if (response.code === 200 && response.data != null) {
+    if (response.code === 200 && response.raw != null && response.raw !== '') {
       const parsed = this.parseArticleList(response.raw, page);
       result.data = parsed;
       if (parsed.errorMsg) {
         result.message = parsed.errorMsg;
       }
     } else {
-      result.data = new ArticleList();
+      const errorList = new ArticleList();
+      if (response.code !== 200) {
+        errorList.errorMsg = '请求失败 (HTTP ' + response.code + ')';
+      } else {
+        errorList.errorMsg = response.message || '服务器返回空数据';
+      }
+      result.data = errorList;
     }
     return result;
   }
@@ -478,12 +508,18 @@ export class NgaApi {
         let errMsg = '';
         if (Array.isArray(errorField)) {
           const arr = errorField as string[];
-          if (arr.length > 0) errMsg = String(arr[0]);
+          if (arr.length > 0 && arr[0] != null) errMsg = String(arr[0]);
+        } else if (typeof errorField === 'string') {
+          errMsg = errorField as string;
         } else if (typeof errorField === 'object') {
           const obj = errorField as Record<string, string>;
           errMsg = obj['0'] || '';
         }
         if (errMsg) {
+          const colonIdx = errMsg.indexOf(':');
+          if (colonIdx > 0 && colonIdx <= 3) {
+            errMsg = errMsg.substring(colonIdx + 1);
+          }
           list.errorMsg = errMsg;
           return list;
         }
@@ -491,6 +527,7 @@ export class NgaApi {
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
       if (data == null) {
+        list.errorMsg = '服务器返回数据为空';
         return list;
       }
 
@@ -563,69 +600,74 @@ export class NgaApi {
         }
 
         for (let i = 0; i < rItems.length; i++) {
-          const item = rItems[i];
-          const article = new Article();
-          article.pid = String(item['pid'] != null ? item['pid'] : '');
-          article.tid = list.tid;
-          article.floor = item['lou'] != null ? (item['lou'] as number) : 0;
-          article.content = item['content'] != null ? String(item['content']) : '';
-          const postdate = item['postdate'];
-          if (postdate != null) {
-            const pdStr = String(postdate);
-            const pdTimestamp = item['postdatetimestamp'];
-            if (pdTimestamp != null) {
-              article.postDate = String(pdTimestamp);
-            } else {
-              article.postDate = pdStr;
-            }
-          }
-
-          // 从 __R 条目获取 authorid，再从 __U 查找用户名
-          const authorId = item['authorid'];
-          if (authorId != null) {
-            article.author.uid = String(authorId);
-            const userInfo = userMap.get(String(authorId));
-            if (userInfo != null) {
-              const uname = userInfo['username'];
-              if (uname != null) {
-                article.author.username = String(uname);
-              }
-              const nickname = userInfo['nickname'];
-              if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
-                article.author.username = String(nickname);
+          try {
+            const item = rItems[i];
+            const article = new Article();
+            article.pid = String(item['pid'] != null ? item['pid'] : '');
+            article.tid = list.tid;
+            const louVal = item['lou'];
+            article.floor = (louVal != null) ? Number(louVal) : i;
+            if (isNaN(article.floor)) article.floor = i;
+            article.content = item['content'] != null ? String(item['content']) : '';
+            const postdate = item['postdate'];
+            if (postdate != null) {
+              const pdTimestamp = item['postdatetimestamp'];
+              if (pdTimestamp != null) {
+                article.postDate = String(pdTimestamp);
+              } else {
+                article.postDate = String(postdate);
               }
             }
-          }
-          // 兼容：如果 __R 条目直接包含 author 字段（旧格式）
-          if (!article.author.username) {
-            const directAuthor = item['author'];
-            if (directAuthor != null && String(directAuthor) !== '') {
-              article.author.username = String(directAuthor);
+
+            const authorId = item['authorid'];
+            if (authorId != null) {
+              article.author.uid = String(authorId);
+              const userInfo = userMap.get(String(authorId));
+              if (userInfo != null) {
+                const uname = userInfo['username'];
+                if (uname != null) {
+                  article.author.username = String(uname);
+                }
+                const nickname = userInfo['nickname'];
+                if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
+                  article.author.username = String(nickname);
+                }
+              }
             }
-          }
+            if (!article.author.username) {
+              const directAuthor = item['author'];
+              if (directAuthor != null && String(directAuthor) !== '') {
+                article.author.username = String(directAuthor);
+              }
+            }
 
-          const score = item['score'];
-          if (score != null) {
-            article.likes = score as number;
-          }
-          const subject = item['subject'];
-          if (subject != null && String(subject) !== '') {
-            article.noteInfo = String(subject);
-          }
+            const score = item['score'];
+            if (score != null) {
+              const scoreNum = Number(score);
+              article.likes = isNaN(scoreNum) ? 0 : scoreNum;
+            }
+            const subject = item['subject'];
+            if (subject != null && String(subject) !== '') {
+              article.noteInfo = String(subject);
+            }
 
-          // 解析附件
-          const attachsField = item['attachs'];
-          if (attachsField != null && typeof attachsField === 'object') {
-            this.parseAttachments(article, attachsField);
-          }
+            const attachsField = item['attachs'];
+            if (attachsField != null && typeof attachsField === 'object') {
+              this.parseAttachments(article, attachsField);
+            }
 
-          list.articles.push(article);
+            list.articles.push(article);
+          } catch (itemErr) {
+            console.error('Parse article item ' + i + ' failed:', itemErr);
+          }
         }
       }
 
       list.hasMore = currentPage < list.totalPages;
     } catch (err) {
       console.error('Parse article list failed:', err);
+      console.error('Raw response (first 500 chars):', jsonStr.substring(0, 500));
+      list.errorMsg = '内容解析失败';
     }
 
     return list;

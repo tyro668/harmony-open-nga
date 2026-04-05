@@ -39,9 +39,9 @@ struct SettingsPage {
   }
 
   async saveStartPage(index: number) {
-    this.startPageIndex = index;
     try {
       await PreferencesManager.getInstance().putString(AppConstants.PREF_START_PAGE, '' + index);
+      this.startPageIndex = index;
     } catch (e) {
       console.error('Save start page setting failed:', e);
     }
@@ -63,7 +63,6 @@ struct SettingsPage {
   }
 
   async saveFontSize(index: number) {
-    this.fontSizeIndex = index;
     let level = 'normal';
     if (index === 0) {
       level = 'small';
@@ -72,6 +71,7 @@ struct SettingsPage {
     }
     try {
       await PreferencesManager.getInstance().putString(AppConstants.PREF_FONT_SIZE, level);
+      this.fontSizeIndex = index;
     } catch (e) {
       console.error('Save font size setting failed:', e);
     }

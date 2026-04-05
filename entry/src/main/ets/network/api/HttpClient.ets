@@ -105,10 +105,17 @@ export class HttpClient {
       const httpResponse = await httpRequest.request(fullUrl, options);
 
       response.code = httpResponse.responseCode;
-      response.message = 'Success';
       if (typeof httpResponse.result === 'string') {
+        response.message = 'Success';
         response.raw = httpResponse.result;
         response.data = httpResponse.result;
+      } else if (httpResponse.result != null) {
+        response.message = 'Success';
+        const resultStr = String(httpResponse.result);
+        response.raw = resultStr;
+        response.data = resultStr;
+      } else {
+        response.message = '服务器返回空响应';
       }
     } catch (err) {
       response.code = -1;

@@ -130,6 +130,10 @@ struct ArticleListPage {
         } else {
           this.articles = data.articles;
         }
+
+        if (this.articles.length === 0 && !loadMore) {
+          this.loadError = '该帖子暂无可显示的内容';
+        }
       } else {
         this.loadError = response.message || '加载失败';
       }
@@ -759,7 +763,28 @@ struct ArticleListPage {
         .onReachEnd(() => { this.loadNextPage(); })
       } else {
         Column() {
-          Text('\u6682\u65E0\u5185\u5BB9').fontSize(FontSize.MEDIUM).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          Text('\u{1F4AD}')
+            .fontSize(48)
+          Text('暂无内容')
+            .fontSize(FontSize.MEDIUM)
+            .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+            .margin({ top: 12 })
+          Text('该帖子可能需要登录或特定权限才能查看')
+            .fontSize(FontSize.SMALL)
+            .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+            .margin({ top: 6 })
+          Button('重新加载')
+            .fontSize(FontSize.NORMAL)
+            .fontColor('#FFFFFF')
+            .backgroundColor(ThemeColors.PRIMARY)
+            .borderRadius(BorderRadius.EXTRA_LARGE)
+            .height(40)
+            .padding({ left: 24, right: 24 })
+            .margin({ top: 20 })
+            .onClick(() => {
+              this.page = 1;
+              this.loadArticles();
+            })
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
