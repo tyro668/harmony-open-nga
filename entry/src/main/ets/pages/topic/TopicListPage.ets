@@ -37,6 +37,18 @@ struct TopicListPage {
     this.loadTopics();
   }
 
+  private authorInitial(name: string): string {
+    const s = name != null ? name.trim() : '';
+    if (s.length === 0) {
+      return '?';
+    }
+    const c0 = s.charCodeAt(0);
+    if (c0 >= 0xD800 && c0 <= 0xDBFF && s.length >= 2) {
+      return s.substring(0, 2);
+    }
+    return s.substring(0, 1);
+  }
+
   async loadTopics(refresh: boolean = true) {
     if (refresh) {
       this.page = 1;
@@ -236,14 +248,16 @@ struct TopicListPage {
         Row() {
           Stack() {
             Circle().width(20).height(20).fill(ThemeColors.PRIMARY_LIGHT)
-            Text((topic.author.username || '?').substring(0, 1))
+            Text(this.authorInitial(topic.author.username))
               .fontSize(9)
               .fontColor(ThemeColors.PRIMARY)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(ThemeColors.FONT_FAMILY_UI)
           }
           Text(topic.author.username || '匿名')
             .fontSize(FontSize.SMALL)
             .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+            .fontFamily(ThemeColors.FONT_FAMILY_UI)
             .margin({ left: 6 })
         }
 

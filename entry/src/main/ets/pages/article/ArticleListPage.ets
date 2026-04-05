@@ -1,5 +1,7 @@
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
 import { Article, Attachment } from '../../model/entity/Article';
+import { Topic } from '../../model/entity/Topic';
+import { User } from '../../model/entity/User';
 import { ngaApi } from '../../network/api/NgaApi';
 import { NgaApi } from '../../network/api/NgaApi';
 import { HttpClient } from '../../network/api/HttpClient';
@@ -100,22 +102,81 @@ struct ArticleListPage {
     }
   }
 
-  goToUserProfile(uid: string, username: string) {
-    // 打印调试信息
-    console.info('goToUserProfile called with uid=' + uid + ', username=' + username);
-    
-    // 确保 uid 有效
-    let userId = uid;
-    if (userId == null || userId === '' || userId === '0') {
-      // 如果 uid 无效，尝试使用用户名
-      userId = username || '0';
+  /** 头像首字：兼容中文与代理对（emoji 等） */
+  private authorInitial(name: string): string {
+    const s = name != null ? name.trim() : '';
+    if (s.length === 0) {
+      return '?';
     }
+    const c0 = s.charCodeAt(0);
+    if (c0 >= 0xD800 && c0 <= 0xDBFF && s.length >= 2) {
+      return s.substring(0, 2);
+    }
+    return s.substring(0, 1);
+  }
+
+  goToUserProfile(uid: string, username: string) {
+    const id = uid != null ? String(uid).trim() : '';
+    // 资料接口只接受数字 UID；勿把中文昵称当作 uid（会导致加载失败）
+    if (id === '' || id === '0' || !/^\d+$/.test(id)) {
+      promptAction.showToast({ message: '暂无法打开资料：缺少该用户的数字 UID' });
+      return;
+    }
+    const params: Record<string, Object> = { 'uid': id, 'name': username != null ? username : '' };
+    router.pushUrl({ url: 'pages/profile/ProfilePage', params: params });
+  }
+
+  async saveBrowseHistory(tid: string, subject: string) {
+    if (tid === '' || subject === '') return;
     
-    console.info('Navigating to profile with uid=' + userId);
-    router.pushUrl({
-      url: 'pages/profile/ProfilePage',
-      params: { uid: userId, name: username || '' }
-    });
+    try {
+      const KEY_HISTORY = 'topic_history';
+      const MAX_HISTORY = 100;
+      
+      // 加载现有历史
+      const jsonStr = await PreferencesManager.getInstance().getString(KEY_HISTORY);
+      let topics: Topic[] = [];
+      if (jsonStr !== '') {
+        topics = JSON.parse(jsonStr) as Topic[];
+      }
+      
+      // 检查是否已存在相同帖子
+      let existingIndex = -1;
+      for (let i = 0; i < topics.length; i++) {
+        if (topics[i].tid === tid) {
+          existingIndex = i;
+          break;
+        }
+      }
+      
+      // 创建历史记录项
+      const historyTopic = new Topic();
+      historyTopic.tid = tid;
+      historyTopic.subject = subject;
+      historyTopic.author = new User();
+      historyTopic.author.username = '';
+      historyTopic.postDate = String(Math.floor(Date.now() / 1000));
+      historyTopic.replies = 0;
+      
+      // 如果已存在，移除旧的
+      if (existingIndex >= 0) {
+        topics.splice(existingIndex, 1);
+      }
+      
+      // 添加到开头
+      topics.unshift(historyTopic);
+      
+      // 限制最大数量
+      if (topics.length > MAX_HISTORY) {
+        topics = topics.slice(0, MAX_HISTORY);
+      }
+      
+      // 保存
+      await PreferencesManager.getInstance().putString(KEY_HISTORY, JSON.stringify(topics));
+      console.info('Saved browse history: tid=' + tid + ', subject=' + subject);
+    } catch (err) {
+      console.error('Save browse history failed:', err);
+    }
   }
 
   async loadArticles(loadMore: boolean = false) {
@@ -136,6 +197,10 @@ struct ArticleListPage {
         }
         if (data.subject != '') {
           this.subject = data.subject;
+          // 首次加载时保存浏览历史
+          if (!loadMore && this.page === 1) {
+            this.saveBrowseHistory(this.tid, this.subject);
+          }
         }
         this.totalPages = data.totalPages;
         this.totalCount = data.totalCount;
@@ -916,10 +981,11 @@ struct ArticleListPage {
         // 头像（可点击）
         Stack() {
           Circle().width(36).height(36).fill(ThemeColors.PRIMARY_LIGHT)
-          Text((article.author.username || '?').substring(0, 1))
+          Text(this.authorInitial(article.author.username))
             .fontSize(14)
             .fontColor(ThemeColors.PRIMARY)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(ThemeColors.FONT_FAMILY_UI)
         }
         .onClick(() => {
           this.goToUserProfile(article.author.uid, article.author.username);
@@ -932,6 +998,7 @@ struct ArticleListPage {
               .fontSize(FontSize.NORMAL)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+              .fontFamily(ThemeColors.FONT_FAMILY_UI)
               .onClick(() => {
                 this.goToUserProfile(article.author.uid, article.author.username);
               })

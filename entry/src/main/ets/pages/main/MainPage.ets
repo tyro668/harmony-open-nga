@@ -30,6 +30,18 @@ struct MainPage {
     this.user = userManager.getCurrentUser();
   }
 
+  private authorInitial(name: string): string {
+    const s = name != null ? name.trim() : '';
+    if (s.length === 0) {
+      return '?';
+    }
+    const c0 = s.charCodeAt(0);
+    if (c0 >= 0xD800 && c0 <= 0xDBFF && s.length >= 2) {
+      return s.substring(0, 2);
+    }
+    return s.substring(0, 1);
+  }
+
   async initData() {
     this.user = userManager.getCurrentUser();
     userManager.setOnUserChanged((user: User | null) => {
@@ -300,15 +312,17 @@ struct MainPage {
             .width(32)
             .height(32)
             .fill(ThemeColors.PRIMARY_LIGHT)
-          Text((topic.author.username || '?').substring(0, 1))
+          Text(this.authorInitial(topic.author.username))
             .fontSize(13)
             .fontColor(ThemeColors.PRIMARY)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(ThemeColors.FONT_FAMILY_UI)
         }
 
         Text(topic.author.username || '匿名')
           .fontSize(FontSize.SMALL)
           .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+          .fontFamily(ThemeColors.FONT_FAMILY_UI)
           .margin({ left: 8 })
 
         Blank()

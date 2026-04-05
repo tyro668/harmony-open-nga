@@ -144,6 +144,127 @@ export class NgaApi {
   }
 
   /**
+   * 清洗昵称中的 HTML 标签与常见实体（接口有时会把 author 带标签返回）
+   */
+  private sanitizeDisplayName(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    let s = String(raw).replace(/<[^>]*>/g, '');
+    s = s.replace(/&nbsp;/g, ' ');
+    s = s.replace(/&amp;/g, '&');
+    s = s.replace(/&lt;/g, '<');
+    s = s.replace(/&gt;/g, '>');
+    s = s.replace(/&quot;/g, '"');
+    const reDec = /&#(\d+);/;
+    let m = reDec.exec(s);
+    let guard = 0;
+    while (m != null && guard < 50) {
+      const code = parseInt(m[1], 10);
+      const ch = (!isNaN(code) && code > 0 && code < 0x110000) ? String.fromCharCode(code) : '';
+      s = s.replace(m[0], ch);
+      m = reDec.exec(s);
+      guard++;
+    }
+    const reHex = /&#x([0-9a-fA-F]+);/;
+    m = reHex.exec(s);
+    guard = 0;
+    while (m != null && guard < 50) {
+      const code = parseInt(m[1], 16);
+      const ch = (!isNaN(code) && code > 0 && code < 0x110000) ? String.fromCharCode(code) : '';
+      s = s.replace(m[0], ch);
+      m = reHex.exec(s);
+      guard++;
+    }
+    return s.trim();
+  }
+
+  /**
+   * read.php 的 __T 可能是单层主题对象，也可能是以 tid 为键的嵌套对象
+   */
+  private extractThreadDetailMeta(tField: Object | null): Record<string, Object> | null {
+    if (tField == null || typeof tField !== 'object') {
+      return null;
+    }
+    if (Array.isArray(tField)) {
+      const arr = tField as Object[];
+      if (arr.length > 0 && arr[0] != null && typeof arr[0] === 'object') {
+        return arr[0] as Record<string, Object>;
+      }
+      return null;
+    }
+    const o = tField as Record<string, Object>;
+    if (o['tid'] != null) {
+      return o;
+    }
+    const keys = Object.keys(o);
+    for (let k = 0; k < keys.length; k++) {
+      const key = keys[k];
+      if (key.indexOf('__') === 0) {
+        continue;
+      }
+      const v = o[key];
+      if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+        const rec = v as Record<string, Object>;
+        if (rec['tid'] != null) {
+          return rec;
+        }
+      }
+    }
+    return o;
+  }
+
+  /** 仅接受正整数 UID 字符串，0 或非法视为无 */
+  private positiveUidString(raw: Object | null | undefined): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    const n = Number(raw);
+    if (isNaN(n) || n <= 0) {
+      return '';
+    }
+    return String(Math.floor(n));
+  }
+
+  private findUserRecordForPost(
+    userMap: Map<string, Record<string, Object>>,
+    userRecords: Record<string, Object>[],
+    authorIdStr: string,
+    displayAuthor: string
+  ): Record<string, Object> | null {
+    if (authorIdStr !== '' && authorIdStr !== '0') {
+      const r1 = userMap.get(authorIdStr);
+      if (r1 != null) {
+        return r1;
+      }
+    }
+    if (authorIdStr !== '' && authorIdStr !== '0') {
+      for (let i = 0; i < userRecords.length; i++) {
+        const uidVal = userRecords[i]['uid'];
+        if (uidVal != null && String(uidVal) === authorIdStr) {
+          return userRecords[i];
+        }
+      }
+    }
+    const dn = this.sanitizeDisplayName(displayAuthor);
+    if (dn !== '') {
+      for (let j = 0; j < userRecords.length; j++) {
+        const rec = userRecords[j];
+        const un = rec['username'];
+        const nn = rec['nickname'];
+        if (un != null && this.sanitizeDisplayName(String(un)) === dn) {
+          return rec;
+        }
+        if (nn != null && String(nn) !== '' && String(nn) !== 'null' &&
+          this.sanitizeDisplayName(String(nn)) === dn) {
+          return rec;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * RSA 加密密码（与 Web 端 JSEncrypt 行为一致）
    */
   private async encryptPassword(password: string): Promise<string> {
@@ -525,8 +646,10 @@ export class NgaApi {
         topic.tid = String(item['tid'] != null ? item['tid'] : '');
         topic.fid = String(item['fid'] != null ? item['fid'] : '');
         topic.subject = item['subject'] != null ? String(item['subject']) : '';
-        topic.author.username = item['author'] != null ? String(item['author']) : '';
-        topic.author.uid = String(item['authorid'] != null ? item['authorid'] : '');
+        const topicAuthorRaw = item['author'] != null ? String(item['author']) : '';
+        topic.author.username = this.sanitizeDisplayName(topicAuthorRaw);
+        const topicAid = item['authorid'] != null ? item['authorid'] : item['userid'];
+        topic.author.uid = this.positiveUidString(topicAid);
         topic.postDate = String(item['postdate'] != null ? item['postdate'] : '');
         topic.lastPostDate = String(item['lastpost'] != null ? item['lastpost'] : '');
         topic.replies = item['replies'] != null ? (item['replies'] as number) : 0;
@@ -625,12 +748,23 @@ export class NgaApi {
         return list;
       }
 
-      // __T 在帖子详情中始终是对象
-      const tField: Object = data['__T'];
-      if (tField != null && typeof tField === 'object' && !Array.isArray(tField)) {
-        const threadInfo = tField as Record<string, Object>;
-        list.tid = String(threadInfo['tid'] != null ? threadInfo['tid'] : '');
-        list.subject = threadInfo['subject'] != null ? String(threadInfo['subject']) : '';
+      const tField: Object | null = data['__T'] as Object;
+      const threadMeta = this.extractThreadDetailMeta(tField);
+      let threadAuthorId = '';
+      let threadAuthorName = '';
+      if (threadMeta != null) {
+        if (threadMeta['tid'] != null) {
+          list.tid = String(threadMeta['tid']);
+        }
+        if (threadMeta['subject'] != null) {
+          list.subject = String(threadMeta['subject']);
+        }
+        const ta = threadMeta['authorid'] != null ? threadMeta['authorid'] :
+          (threadMeta['userid'] != null ? threadMeta['userid'] : threadMeta['posterid']);
+        threadAuthorId = this.positiveUidString(ta);
+        if (threadMeta['author'] != null) {
+          threadAuthorName = this.sanitizeDisplayName(String(threadMeta['author']));
+        }
       }
 
       const rows: number = data['__ROWS'] as number;
@@ -640,8 +774,9 @@ export class NgaApi {
       const perPage = (rowsPerPage != null && rowsPerPage > 0) ? rowsPerPage : 20;
       list.totalPages = list.totalCount > 0 ? Math.ceil(list.totalCount / perPage) : 1;
 
-      // 解析用户信息表 __U（uid -> 用户数据）
+      // 解析用户信息表 __U（键可能是 uid 或用户名，需同时按 uid 建索引）
       const userMap: Map<string, Record<string, Object>> = new Map();
+      const userRecords: Record<string, Object>[] = [];
       const uField = data['__U'];
       if (uField != null && typeof uField === 'object') {
         if (Array.isArray(uField)) {
@@ -651,8 +786,10 @@ export class NgaApi {
               const u = uArr[i] as Record<string, Object>;
               const uid = u['uid'];
               if (uid != null) {
-                userMap.set(String(uid), u);
+                const uidStr = String(uid);
+                userMap.set(uidStr, u);
               }
+              userRecords.push(u);
             }
           }
         } else {
@@ -662,7 +799,13 @@ export class NgaApi {
             if (uKeys[i].indexOf('__') === 0) continue;
             const u = uObj[uKeys[i]];
             if (u != null && typeof u === 'object') {
-              userMap.set(uKeys[i], u as Record<string, Object>);
+              const rec = u as Record<string, Object>;
+              userMap.set(uKeys[i], rec);
+              const innerUid = rec['uid'];
+              if (innerUid != null) {
+                userMap.set(String(innerUid), rec);
+              }
+              userRecords.push(rec);
             }
           }
         }
@@ -713,26 +856,45 @@ export class NgaApi {
               }
             }
 
-            const authorId = item['authorid'];
-            if (authorId != null) {
-              article.author.uid = String(authorId);
-              console.info('Parsed author uid: ' + article.author.uid);
-              const userInfo = userMap.get(String(authorId));
-              if (userInfo != null) {
-                const uname = userInfo['username'];
-                if (uname != null) {
-                  article.author.username = String(uname);
-                }
-                const nickname = userInfo['nickname'];
-                if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
-                  article.author.username = String(nickname);
+            const idFromPost = item['authorid'] != null ? item['authorid'] :
+              (item['uid'] != null ? item['uid'] :
+                (item['posterid'] != null ? item['posterid'] : item['userid']));
+            let authorIdStr = this.positiveUidString(idFromPost);
+            const directAuthorRaw = item['author'] != null ? String(item['author']) : '';
+            const directAuthor = this.sanitizeDisplayName(directAuthorRaw);
+
+            const userInfo = this.findUserRecordForPost(userMap, userRecords, authorIdStr, directAuthor);
+            if (userInfo != null) {
+              const innerUid = userInfo['uid'];
+              if (innerUid != null) {
+                const uis = this.positiveUidString(innerUid);
+                if (uis !== '') {
+                  authorIdStr = uis;
                 }
               }
+              const uname = userInfo['username'];
+              if (uname != null) {
+                article.author.username = this.sanitizeDisplayName(String(uname));
+              }
+              const nickname = userInfo['nickname'];
+              if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
+                article.author.username = this.sanitizeDisplayName(String(nickname));
+              }
             }
-            if (!article.author.username) {
-              const directAuthor = item['author'];
-              if (directAuthor != null && String(directAuthor) !== '') {
-                article.author.username = String(directAuthor);
+            if (authorIdStr !== '') {
+              article.author.uid = authorIdStr;
+            }
+            if (!article.author.username && directAuthor !== '') {
+              article.author.username = directAuthor;
+            }
+
+            const isFirstPost = (i === 0) || (article.floor === 0);
+            if (isFirstPost) {
+              if ((article.author.uid === '' || article.author.uid === '0') && threadAuthorId !== '') {
+                article.author.uid = threadAuthorId;
+              }
+              if (!article.author.username && threadAuthorName !== '') {
+                article.author.username = threadAuthorName;
               }
             }
 
@@ -950,6 +1112,38 @@ export class NgaApi {
     categories.push(catClub);
 
     return categories;
+  }
+
+  /**
+   * 获取用户资料（nuke.php 始终返回 GBK 编码，需用 GBK 解码）
+   */
+  async getUserProfile(uid: string): Promise<HttpResponse<Record<string, Object>>> {
+    const result = new HttpResponse<Record<string, Object>>();
+
+    try {
+      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&uid=' + uid;
+      console.info('getUserProfile URL: ' + url);
+
+      const response = await this.http.getGbk(url);
+      result.code = response.code;
+      result.message = response.message;
+
+      if (response.code === 200 && response.raw != null && response.raw !== '') {
+        let js = response.raw;
+        const jsPrefix = 'window.script_muti_get_var_store=';
+        if (js.indexOf(jsPrefix) === 0) {
+          js = js.substring(jsPrefix.length);
+        }
+        const jsonObj: Record<string, Object> = JSON.parse(js);
+        result.data = jsonObj;
+      }
+    } catch (err) {
+      console.error('getUserProfile failed:', err);
+      result.code = 500;
+      result.message = '请求失败';
+    }
+
+    return result;
   }
 }
 

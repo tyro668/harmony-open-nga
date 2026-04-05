@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { HttpClient } from '../../network/api/HttpClient';
+import { ngaApi } from '../../network/api/NgaApi';
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
 import { LoadingState } from '../../ui/components/CommonComponents';
 
@@ -14,6 +14,10 @@ class ProfileData {
   signature: string = '';
   reputation: string = '0';
   ipLoc: string = '';
+  rvrc: string = '0';
+  followCount: string = '0';
+  title: string = '';
+  honor: string = '';
 }
 
 @Entry
@@ -39,21 +43,25 @@ struct ProfilePage {
     if (this.uid != '') this.loadProfile();
   }
 
+  private nameFirstGlyph(name: string): string {
+    const s = name != null ? name.trim() : '';
+    if (s.length === 0) {
+      return '?';
+    }
+    const c0 = s.charCodeAt(0);
+    if (c0 >= 0xD800 && c0 <= 0xDBFF && s.length >= 2) {
+      return s.substring(0, 2);
+    }
+    return s.substring(0, 1);
+  }
+
   async loadProfile() {
     this.loadingState = LoadingState.LOADING;
     try {
-      const http = HttpClient.getInstance();
-      // 使用正确的 API 格式：__lib=ucp&__act=get&lite=js&noprefix
-      const params = 'uid=' + this.uid;
-      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&' + params;
-      console.info('Profile API URL: ' + url);
-      
-      const response = await http.get(url);
-      console.info('Profile API response code: ' + response.code);
-      console.info('Profile API raw (first 500): ' + (response.raw || '').substring(0, 500));
-      
-      if (response.code === 200 && response.raw != null) {
-        this.parseProfile(response.raw);
+      const response = await ngaApi.getUserProfile(this.uid);
+
+      if (response.code === 200 && response.data != null) {
+        this.parseProfileData(response.data);
         if (this.profile.userName != '') {
           this.loadingState = LoadingState.SUCCESS;
         } else {
@@ -68,29 +76,29 @@ struct ProfilePage {
     }
   }
 
-  parseProfile(jsonStr: string) {
+  private formatTimestamp(ts: number): string {
+    if (ts <= 0) return '-';
+    const d = new Date(ts * 1000);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  parseProfileData(jsonObj: Record<string, Object>) {
     try {
-      let js = jsonStr;
-      // 移除 JSONP 前缀
-      if (js.indexOf('window.script_muti_get_var_store=') === 0) {
-        js = js.substring('window.script_muti_get_var_store='.length);
-      }
-      const jsonObj: Record<string, Object> = JSON.parse(js);
-      
-      // 检查是否有错误
       const errorField = jsonObj['error'];
       if (errorField != null) {
-        console.error('Profile API error:', errorField);
+        console.error('Profile API error:', JSON.stringify(errorField));
         return;
       }
-      
+
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
       if (data == null) {
         console.error('Profile data is null');
         return;
       }
-      
-      // data 可能是对象，key 是 "0", "1" 等
+
       let userData: Record<string, Object> | null = null;
       if (Array.isArray(data)) {
         const arr = data as Object[];
@@ -98,43 +106,66 @@ struct ProfilePage {
           userData = arr[0] as Record<string, Object>;
         }
       } else {
-        // 尝试获取 "0" 键
         const data0 = data['0'];
         if (data0 != null && typeof data0 === 'object') {
           userData = data0 as Record<string, Object>;
         } else {
-          // 直接使用 data
           userData = data;
         }
       }
-      
+
       if (userData == null) {
         console.error('User data is null');
         return;
       }
-      
+
       this.profile.uid = userData['uid'] != null ? String(userData['uid']) : this.uid;
       this.profile.userName = userData['username'] != null ? String(userData['username']) : '';
-      
-      // 优先使用 nickname
+
       const nickname = userData['nickname'];
       if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
         this.profile.userName = String(nickname);
       }
-      
+      // 若 API 只返回 UID 格式名（如 "UID42423334"），优先使用帖子中传入的用户名
+      if (this.userName && this.profile.userName.startsWith('UID')) {
+        this.profile.userName = this.userName;
+      }
+
       this.profile.avatarUrl = userData['avatar'] != null ? String(userData['avatar']) : '';
-      this.profile.postCount = userData['posts'] != null ? String(userData['posts']) : '0';
-      this.profile.registerDate = userData['regdate'] != null ? String(userData['regdate']) : '';
+
+      const postsVal = userData['posts'];
+      const postNumVal = userData['postnum'];
+      if (postNumVal != null && Number(postNumVal) > 0) {
+        this.profile.postCount = String(postNumVal);
+      } else if (postsVal != null) {
+        this.profile.postCount = String(postsVal);
+      }
+
+      const regdate = userData['regdate'];
+      if (regdate != null) {
+        const ts = Number(regdate);
+        this.profile.registerDate = (!isNaN(ts) && ts > 0) ? this.formatTimestamp(ts) : String(regdate);
+      }
+
       this.profile.money = userData['money'] != null ? String(userData['money']) : '0';
       this.profile.memberGroup = userData['group'] != null ? String(userData['group']) : '';
       this.profile.signature = userData['sign'] != null ? String(userData['sign']) : '';
       this.profile.reputation = userData['fame'] != null ? String(userData['fame']) : '0';
       this.profile.ipLoc = userData['ipLoc'] != null ? String(userData['ipLoc']) : '';
-      
-      console.info('Parsed profile: uid=' + this.profile.uid + ', name=' + this.profile.userName);
+
+      const rvrc = userData['rvrc'];
+      if (rvrc != null) this.profile.rvrc = String(rvrc);
+      const followBy = userData['follow_by_num'];
+      if (followBy != null) this.profile.followCount = String(followBy);
+      const title = userData['title'];
+      if (title != null && String(title) !== '') this.profile.title = String(title);
+      const honor = userData['honor'];
+      if (honor != null && String(honor) !== '') this.profile.honor = String(honor);
+
+      console.info('Parsed profile: uid=' + this.profile.uid + ', name=' + this.profile.userName +
+        ', group=' + this.profile.memberGroup + ', ipLoc=' + this.profile.ipLoc);
     } catch (err) {
-      console.error('Parse profile failed:', err);
-      console.error('Raw response:', jsonStr.substring(0, 1000));
+      console.error('Parse profile data failed:', err);
     }
   }
 
@@ -169,12 +200,15 @@ struct ProfilePage {
             Column() {
               Stack() {
                 Circle().width(80).height(80).fill(ThemeColors.PRIMARY_LIGHT)
-                Text((this.profile.userName || '?').substring(0, 1))
+                Text(this.nameFirstGlyph(this.profile.userName))
                   .fontSize(32).fontColor(ThemeColors.PRIMARY).fontWeight(FontWeight.Bold)
+                  .fontFamily(ThemeColors.FONT_FAMILY_UI)
               }
               Text(this.profile.userName || '用户')
                 .fontSize(FontSize.TITLE).fontWeight(FontWeight.Bold)
-                .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT).margin({ top: 12 })
+                .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                .fontFamily(ThemeColors.FONT_FAMILY_UI)
+                .margin({ top: 12 })
               Text('UID: ' + this.profile.uid)
                 .fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT).margin({ top: 4 })
               if (this.profile.ipLoc != '') {
@@ -189,7 +223,7 @@ struct ProfilePage {
             Row() {
               this.StatItem(this.profile.postCount, '发帖')
               this.StatItem(this.profile.reputation, '威望')
-              this.StatItem(this.profile.money, '金钱')
+              this.StatItem(this.profile.followCount, '关注')
             }
             .width('100%')
             .backgroundColor(ThemeColors.CARD_BG)
@@ -203,6 +237,16 @@ struct ProfilePage {
               this.InfoRow('用户组', this.profile.memberGroup)
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 16 })
               this.InfoRow('注册时间', this.profile.registerDate)
+              if (this.profile.title != '') {
+                Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 16 })
+                this.InfoRow('头衔', this.profile.title)
+              }
+              if (this.profile.honor != '') {
+                Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 16 })
+                this.InfoRow('荣誉', this.profile.honor)
+              }
+              Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 16 })
+              this.InfoRow('金钱', this.profile.money)
             }
             .backgroundColor(ThemeColors.CARD_BG)
             .borderRadius(BorderRadius.MEDIUM)

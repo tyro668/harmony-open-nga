@@ -2,6 +2,9 @@
  * 现代化主题配色 - 灵感源自小红书 / 现代社交应用
  */
 export class ThemeColors {
+  /** 中文/多语言昵称优先使用系统无衬线字体，避免非拉丁字符显示为空白或方框 */
+  static readonly FONT_FAMILY_UI: string = 'HarmonyOS Sans SC, HarmonyOS Sans, PingFang SC, Noto Sans CJK SC, sans-serif';
+
   // 品牌色
   static readonly PRIMARY: string = '#FF2442';
   static readonly PRIMARY_DARK: string = '#E01E3C';

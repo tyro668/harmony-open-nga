@@ -1,4 +1,5 @@
 import http from '@ohos.net.http';
+import { util } from '@kit.ArkTS';
 
 /**
  * HTTP响应
@@ -69,6 +70,36 @@ export class HttpClient {
     return this.request(url, http.RequestMethod.POST, body);
   }
 
+  /**
+   * 按响应头 charset 将正文解码为字符串；默认 UTF-8。
+   * 避免系统把 UTF-8 字节误按本地单字节编码解析导致中文乱码。
+   */
+  private decodeResponseBody(buffer: ArrayBuffer, contentType: string): string {
+    let charset = 'utf-8';
+    if (contentType != null && contentType.length > 0) {
+      const low = contentType.toLowerCase();
+      const idx = low.indexOf('charset=');
+      if (idx >= 0) {
+        let cs = low.substring(idx + 8).trim();
+        const semi = cs.indexOf(';');
+        if (semi >= 0) {
+          cs = cs.substring(0, semi).trim();
+        }
+        cs = cs.replace(/"/g, '').toLowerCase();
+        if (cs === 'gbk' || cs === 'gb2312' || cs === 'gb18030') {
+          charset = 'gbk';
+        }
+      }
+    }
+    try {
+      const decoder = util.TextDecoder.create(charset);
+      return decoder.decodeWithStream(new Uint8Array(buffer));
+    } catch (_e) {
+      const utf8 = util.TextDecoder.create('utf-8');
+      return utf8.decodeWithStream(new Uint8Array(buffer));
+    }
+  }
+
   async request(url: string, method: http.RequestMethod, body: string): Promise<HttpResponse<string>> {
     const httpRequest = http.createHttp();
     const response = new HttpResponse<string>();
@@ -94,6 +125,7 @@ export class HttpClient {
       const options: http.HttpRequestOptions = {
         method: method,
         header: headerMap,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
         connectTimeout: 30000,
         readTimeout: 30000
       };
@@ -105,15 +137,82 @@ export class HttpClient {
       const httpResponse = await httpRequest.request(fullUrl, options);
 
       response.code = httpResponse.responseCode;
-      if (typeof httpResponse.result === 'string') {
+      const hdr = httpResponse.header as Record<string, string> | undefined;
+      const contentType = hdr != null ? (hdr['Content-Type'] || hdr['content-type'] || '') : '';
+
+      const rawResult = httpResponse.result;
+      if (rawResult instanceof ArrayBuffer) {
+        if (rawResult.byteLength === 0) {
+          response.message = '服务器返回空响应';
+        } else {
+          const text = this.decodeResponseBody(rawResult, contentType);
+          response.message = 'Success';
+          response.raw = text;
+          response.data = text;
+        }
+      } else if (typeof rawResult === 'string') {
+        // 部分环境下 expectDataType 未生效，退回字符串（可能仍有乱码，但优于无响应）
+        response.message = 'Success';
+        response.raw = rawResult;
+        response.data = rawResult;
+      } else if (rawResult != null) {
+        response.message = 'Success';
+        const resultStr = String(rawResult);
+        response.raw = resultStr;
+        response.data = resultStr;
+      } else {
+        response.message = '服务器返回空响应';
+      }
+    } catch (err) {
+      response.code = -1;
+      response.message = String(err);
+    } finally {
+      httpRequest.destroy();
+    }
+
+    return response;
+  }
+
+  /**
+   * 以 GBK 编码获取响应（用于 nuke.php 等始终返回 GBK 的 API）
+   */
+  async getGbk(url: string): Promise<HttpResponse<string>> {
+    const httpRequest = http.createHttp();
+    const response = new HttpResponse<string>();
+
+    try {
+      let fullUrl = url;
+      if (!url.startsWith('http')) {
+        fullUrl = this.baseUrl + url;
+      }
+
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        header: {
+          'User-Agent': HttpClient.UA,
+          'Accept': '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'X-User-Agent': 'Nga_Official',
+          'Cookie': this.cookie
+        } as Record<string, string>,
+        connectTimeout: 30000,
+        readTimeout: 30000
+      };
+
+      const httpResponse = await httpRequest.request(fullUrl, options);
+      response.code = httpResponse.responseCode;
+
+      if (httpResponse.result instanceof ArrayBuffer) {
+        const decoder = util.TextDecoder.create('gbk');
+        const decoded = decoder.decodeWithStream(new Uint8Array(httpResponse.result));
+        response.message = 'Success';
+        response.raw = decoded;
+        response.data = decoded;
+      } else if (typeof httpResponse.result === 'string') {
         response.message = 'Success';
         response.raw = httpResponse.result;
         response.data = httpResponse.result;
-      } else if (httpResponse.result != null) {
-        response.message = 'Success';
-        const resultStr = String(httpResponse.result);
-        response.raw = resultStr;
-        response.data = resultStr;
       } else {
         response.message = '服务器返回空响应';
       }
@@ -208,6 +307,7 @@ export class HttpClient {
           'Cookie': cookieStr
         },
         extraData: body,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
         connectTimeout: 30000,
         readTimeout: 30000
       };
@@ -215,8 +315,13 @@ export class HttpClient {
       const httpResponse = await httpRequest.request(fullUrl, options);
       result.code = httpResponse.responseCode;
 
-      if (typeof httpResponse.result === 'string') {
-        result.body = httpResponse.result;
+      const hdr = httpResponse.header as Record<string, string> | undefined;
+      const contentType = hdr != null ? (hdr['Content-Type'] || hdr['content-type'] || '') : '';
+      const rawResult = httpResponse.result;
+      if (rawResult instanceof ArrayBuffer && rawResult.byteLength > 0) {
+        result.body = this.decodeResponseBody(rawResult, contentType);
+      } else if (typeof rawResult === 'string') {
+        result.body = rawResult;
       }
 
       if (httpResponse.cookies) {
