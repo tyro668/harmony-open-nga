@@ -49,6 +49,101 @@ export class NgaApi {
   }
 
   /**
+   * 从 API JSON 响应中提取错误消息
+   */
+  private extractErrorMsg(jsonObj: Record<string, Object>): string {
+    const errorField = jsonObj['error'];
+    if (errorField == null) return '';
+    let errMsg = '';
+    if (Array.isArray(errorField)) {
+      const arr = errorField as string[];
+      if (arr.length > 0 && arr[0] != null) errMsg = String(arr[0]);
+    } else if (typeof errorField === 'string') {
+      errMsg = errorField as string;
+    } else if (typeof errorField === 'object') {
+      const obj = errorField as Record<string, string>;
+      errMsg = obj['0'] || '';
+    }
+    if (errMsg) {
+      const colonIdx = errMsg.indexOf(':');
+      if (colonIdx > 0 && colonIdx <= 3) {
+        errMsg = errMsg.substring(colonIdx + 1);
+      }
+    }
+    return errMsg;
+  }
+
+  /**
+   * 尝试修复截断的 JSON 字符串。
+   * NGA 服务器有时返回不完整的 JSON（被截断），
+   * 此方法通过截取到最后一个完整的 JSON 条目并补全括号来恢复。
+   */
+  private tryFixTruncatedJson(jsonStr: string): string | null {
+    const lastBrace = jsonStr.lastIndexOf('}');
+    const lastBracket = jsonStr.lastIndexOf(']');
+    if (lastBrace < 0 && lastBracket < 0) return null;
+
+    let cutPos = Math.max(lastBrace, lastBracket) + 1;
+    let candidate = jsonStr.substring(0, cutPos);
+
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < candidate.length; i++) {
+      const ch = candidate.charAt(i);
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { if (inString) escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') openBraces++;
+      else if (ch === '}') openBraces--;
+      else if (ch === '[') openBrackets++;
+      else if (ch === ']') openBrackets--;
+    }
+
+    for (let i = 0; i < openBrackets; i++) candidate += ']';
+    for (let i = 0; i < openBraces; i++) candidate += '}';
+
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch (_e) {
+      // fallback: aggressive truncation at last complete object
+      const lastCompleteObj = jsonStr.lastIndexOf('},');
+      const lastCompleteArr = jsonStr.lastIndexOf('],');
+      const fallbackPos = Math.max(lastCompleteObj, lastCompleteArr);
+      if (fallbackPos > 0) {
+        let fallback = jsonStr.substring(0, fallbackPos + 1);
+        openBraces = 0;
+        openBrackets = 0;
+        inString = false;
+        escape = false;
+        for (let i = 0; i < fallback.length; i++) {
+          const ch = fallback.charAt(i);
+          if (escape) { escape = false; continue; }
+          if (ch === '\\') { if (inString) escape = true; continue; }
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+          if (ch === '{') openBraces++;
+          else if (ch === '}') openBraces--;
+          else if (ch === '[') openBrackets++;
+          else if (ch === ']') openBrackets--;
+        }
+        for (let i = 0; i < openBrackets; i++) fallback += ']';
+        for (let i = 0; i < openBraces; i++) fallback += '}';
+        try {
+          JSON.parse(fallback);
+          return fallback;
+        } catch (_e2) {
+          return null;
+        }
+      }
+      return null;
+    }
+  }
+
+  /**
    * RSA 加密密码（与 Web 端 JSEncrypt 行为一致）
    */
   private async encryptPassword(password: string): Promise<string> {
@@ -354,30 +449,27 @@ export class NgaApi {
         js = js.substring(jsPrefix.length);
       }
 
-      const jsonObj: Record<string, Object> = JSON.parse(js);
-
-      // 检查是否有错误响应（如"未登录"）
-      const errorField = jsonObj['error'];
-      if (errorField != null) {
-        let errMsg = '';
-        if (Array.isArray(errorField)) {
-          const arr = errorField as string[];
-          if (arr.length > 0 && arr[0] != null) errMsg = String(arr[0]);
-        } else if (typeof errorField === 'string') {
-          errMsg = errorField as string;
-        } else if (typeof errorField === 'object') {
-          const obj = errorField as Record<string, string>;
-          errMsg = obj['0'] || '';
-        }
-        if (errMsg) {
-          const colonIdx = errMsg.indexOf(':');
-          if (colonIdx > 0 && colonIdx <= 3) {
-            errMsg = errMsg.substring(colonIdx + 1);
-          }
-          list.errorMsg = errMsg;
-          console.error('Topic list API error:', errMsg);
+      let jsonObj: Record<string, Object>;
+      try {
+        jsonObj = JSON.parse(js) as Record<string, Object>;
+      } catch (_parseErr) {
+        console.error('Topic JSON.parse failed, attempting recovery...');
+        const fixed = this.tryFixTruncatedJson(js);
+        if (fixed != null) {
+          console.info('Topic truncated JSON recovered');
+          jsonObj = JSON.parse(fixed) as Record<string, Object>;
+        } else {
+          list.errorMsg = '数据解析失败';
           return list;
         }
+      }
+
+      // 检查是否有错误响应（如"未登录"）
+      const errMsg = this.extractErrorMsg(jsonObj);
+      if (errMsg) {
+        list.errorMsg = errMsg;
+        console.error('Topic list API error:', errMsg);
+        return list;
       }
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
@@ -500,29 +592,26 @@ export class NgaApi {
         }
       }
 
-      const jsonObj: Record<string, Object> = JSON.parse(js);
-
-      // 检查错误响应
-      const errorField = jsonObj['error'];
-      if (errorField != null) {
-        let errMsg = '';
-        if (Array.isArray(errorField)) {
-          const arr = errorField as string[];
-          if (arr.length > 0 && arr[0] != null) errMsg = String(arr[0]);
-        } else if (typeof errorField === 'string') {
-          errMsg = errorField as string;
-        } else if (typeof errorField === 'object') {
-          const obj = errorField as Record<string, string>;
-          errMsg = obj['0'] || '';
-        }
-        if (errMsg) {
-          const colonIdx = errMsg.indexOf(':');
-          if (colonIdx > 0 && colonIdx <= 3) {
-            errMsg = errMsg.substring(colonIdx + 1);
-          }
-          list.errorMsg = errMsg;
+      let jsonObj: Record<string, Object>;
+      try {
+        jsonObj = JSON.parse(js) as Record<string, Object>;
+      } catch (_parseErr) {
+        console.error('JSON.parse failed, attempting truncated JSON recovery...');
+        const fixed = this.tryFixTruncatedJson(js);
+        if (fixed != null) {
+          console.info('Truncated JSON recovered, original=' + js.length + ' fixed=' + fixed.length);
+          jsonObj = JSON.parse(fixed) as Record<string, Object>;
+        } else {
+          list.errorMsg = '数据解析失败';
           return list;
         }
+      }
+
+      // 检查错误响应
+      const errMsg = this.extractErrorMsg(jsonObj);
+      if (errMsg) {
+        list.errorMsg = errMsg;
+        return list;
       }
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;

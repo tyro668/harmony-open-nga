@@ -127,17 +127,49 @@ struct SettingsPage {
             // 通用
             this.SectionTitle('\u901A\u7528\u8BBE\u7F6E')
             Column() {
-              this.SettingRow('\u{1F3E0}', '\u542F\u52A8\u9875\u9762', this.startPageOptions[this.startPageIndex], () => {
-                this.showStartPagePicker = true;
-              })
+              // 启动页面设置行
+              Row() {
+                Text('\u{1F3E0}').fontSize(20).width(32).textAlign(TextAlign.Center)
+                Text('\u542F\u52A8\u9875\u9762')
+                  .fontSize(FontSize.MEDIUM)
+                  .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                  .margin({ left: 12 })
+                  .layoutWeight(1)
+                Text(this.startPageOptions[this.startPageIndex])
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                Text('\u{276F}')
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .margin({ left: 8 })
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => { this.showStartPagePicker = true; })
+              
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
               this.SettingRow('\u{1F319}', '\u591C\u95F4\u6A21\u5F0F', '\u5173\u95ED', () => {})
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
               this.SettingRow('\u{1F514}', '\u6D88\u606F\u901A\u77E5', '\u5F00\u542F', () => {})
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-              this.SettingRow('\u{1F524}', '\u5B57\u4F53\u5927\u5C0F', this.fontSizeOptions[this.fontSizeIndex], () => {
-                this.showFontSizePicker = true;
-              })
+              
+              // 字体大小设置行
+              Row() {
+                Text('\u{1F524}').fontSize(20).width(32).textAlign(TextAlign.Center)
+                Text('\u5B57\u4F53\u5927\u5C0F')
+                  .fontSize(FontSize.MEDIUM)
+                  .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                  .margin({ left: 12 })
+                  .layoutWeight(1)
+                Text(this.fontSizeOptions[this.fontSizeIndex])
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                Text('\u{276F}')
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .margin({ left: 8 })
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => { this.showFontSizePicker = true; })
             }
             .backgroundColor(ThemeColors.CARD_BG)
             .borderRadius(BorderRadius.MEDIUM)
