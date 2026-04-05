@@ -43,10 +43,15 @@ struct ProfilePage {
     this.loadingState = LoadingState.LOADING;
     try {
       const http = HttpClient.getInstance();
-      // 使用 __output=8 格式获取用户信息
-      const response = await http.get('/nuke.php?func=ucp&uid=' + this.uid + '&__output=8');
+      // 使用正确的 API 格式：__lib=ucp&__act=get&lite=js&noprefix
+      const params = 'uid=' + this.uid;
+      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&' + params;
+      console.info('Profile API URL: ' + url);
+      
+      const response = await http.get(url);
       console.info('Profile API response code: ' + response.code);
       console.info('Profile API raw (first 500): ' + (response.raw || '').substring(0, 500));
+      
       if (response.code === 200 && response.raw != null) {
         this.parseProfile(response.raw);
         if (this.profile.userName != '') {
@@ -85,23 +90,46 @@ struct ProfilePage {
         return;
       }
       
-      this.profile.uid = data['uid'] != null ? String(data['uid']) : this.uid;
-      this.profile.userName = data['username'] != null ? String(data['username']) : '';
+      // data 可能是对象，key 是 "0", "1" 等
+      let userData: Record<string, Object> | null = null;
+      if (Array.isArray(data)) {
+        const arr = data as Object[];
+        if (arr.length > 0 && arr[0] != null && typeof arr[0] === 'object') {
+          userData = arr[0] as Record<string, Object>;
+        }
+      } else {
+        // 尝试获取 "0" 键
+        const data0 = data['0'];
+        if (data0 != null && typeof data0 === 'object') {
+          userData = data0 as Record<string, Object>;
+        } else {
+          // 直接使用 data
+          userData = data;
+        }
+      }
+      
+      if (userData == null) {
+        console.error('User data is null');
+        return;
+      }
+      
+      this.profile.uid = userData['uid'] != null ? String(userData['uid']) : this.uid;
+      this.profile.userName = userData['username'] != null ? String(userData['username']) : '';
       
       // 优先使用 nickname
-      const nickname = data['nickname'];
+      const nickname = userData['nickname'];
       if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
         this.profile.userName = String(nickname);
       }
       
-      this.profile.avatarUrl = data['avatar'] != null ? String(data['avatar']) : '';
-      this.profile.postCount = data['postnum'] != null ? String(data['postnum']) : '0';
-      this.profile.registerDate = data['regdate'] != null ? String(data['regdate']) : '';
-      this.profile.money = data['money'] != null ? String(data['money']) : '0';
-      this.profile.memberGroup = data['member_group'] != null ? String(data['member_group']) : '';
-      this.profile.signature = data['sign'] != null ? String(data['sign']) : '';
-      this.profile.reputation = data['rvrc'] != null ? String(data['rvrc']) : '0';
-      this.profile.ipLoc = data['iploc'] != null ? String(data['iploc']) : '';
+      this.profile.avatarUrl = userData['avatar'] != null ? String(userData['avatar']) : '';
+      this.profile.postCount = userData['posts'] != null ? String(userData['posts']) : '0';
+      this.profile.registerDate = userData['regdate'] != null ? String(userData['regdate']) : '';
+      this.profile.money = userData['money'] != null ? String(userData['money']) : '0';
+      this.profile.memberGroup = userData['group'] != null ? String(userData['group']) : '';
+      this.profile.signature = userData['sign'] != null ? String(userData['sign']) : '';
+      this.profile.reputation = userData['fame'] != null ? String(userData['fame']) : '0';
+      this.profile.ipLoc = userData['ipLoc'] != null ? String(userData['ipLoc']) : '';
       
       console.info('Parsed profile: uid=' + this.profile.uid + ', name=' + this.profile.userName);
     } catch (err) {
