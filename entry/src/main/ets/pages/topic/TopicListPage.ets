@@ -143,6 +143,13 @@ struct TopicListPage {
     }
   }
 
+  async doRefresh() {
+    if (this.isRefreshing) return;
+    this.isRefreshing = true;
+    await this.loadTopics(true);
+    this.isRefreshing = false;
+  }
+
   build() {
     Column() {
       // 顶部导航栏
@@ -280,6 +287,20 @@ struct TopicListPage {
         .justifyContent(FlexAlign.Center)
       } else {
         List() {
+          // 下拉刷新指示器
+          ListItem() {
+            Row() {
+              if (this.isRefreshing) {
+                LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
+                Text('刷新中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .margin({ left: 8 })
+              }
+            }
+            .width('100%')
+            .height(this.isRefreshing ? 50 : 0)
+            .justifyContent(FlexAlign.Center)
+          }
+
           ForEach(this.topics, (topic: Topic) => {
             ListItem() {
               this.TopicCard(topic);
@@ -318,6 +339,16 @@ struct TopicListPage {
         .edgeEffect(EdgeEffect.Spring)
         .divider({ strokeWidth: 0 })
         .onReachEnd(() => { this.loadMore(); })
+        .onScroll(() => {
+          // 滚动事件
+        })
+        .onScrollFrameBegin((offset: number) => {
+          // 检测下拉刷新：当列表在顶部且继续下拉时
+          if (offset < -50 && !this.isRefreshing && !this.isLoadingMore) {
+            this.doRefresh();
+          }
+          return { offsetRemain: offset };
+        })
       }
     }
     .width('100%')
