@@ -3,24 +3,44 @@ import { Topic } from '../../model/entity/Topic';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 import { ThemeColors, FontSize, BorderRadius } from '../../common/constants/ThemeColors';
 
+/**
+ * 浏览历史页面
+ */
 @Entry
 @Component
 struct HistoryPage {
   @State topics: Topic[] = [];
   @State isLoading: boolean = true;
+  @State errorMsg: string = '';
 
   private readonly MAX_HISTORY: number = 100;
   private readonly KEY_HISTORY: string = 'topic_history';
 
-  aboutToAppear() { this.loadHistory(); }
+  aboutToAppear() {
+    console.info('HistoryPage aboutToAppear');
+    this.loadHistory();
+  }
 
   async loadHistory() {
     this.isLoading = true;
+    this.errorMsg = '';
     try {
+      console.info('Loading history from preferences...');
       const jsonStr = await PreferencesManager.getInstance().getString(this.KEY_HISTORY);
-      if (jsonStr != '') this.topics = JSON.parse(jsonStr);
-    } catch (err) { console.error('Load history failed:', err); }
-    finally { this.isLoading = false; }
+      console.info('History jsonStr length: ' + jsonStr.length);
+      if (jsonStr != '' && jsonStr.length > 2) {
+        this.topics = JSON.parse(jsonStr) as Topic[];
+        console.info('Loaded ' + this.topics.length + ' history items');
+      } else {
+        this.topics = [];
+        console.info('No history items found');
+      }
+    } catch (err) {
+      console.error('Load history failed:', err);
+      this.errorMsg = '加载失败';
+    } finally {
+      this.isLoading = false;
+    }
   }
 
   async saveHistory() {
