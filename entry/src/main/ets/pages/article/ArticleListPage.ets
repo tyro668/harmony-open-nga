@@ -6,14 +6,16 @@ import { ngaApi } from '../../network/api/NgaApi';
 import { NgaApi } from '../../network/api/NgaApi';
 import { HttpClient } from '../../network/api/HttpClient';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
-import { AppConstants } from '../../common/constants/AppConstants';
+import { userManager } from '../../common/manager/UserManager';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
+import connection from '@ohos.net.connection';
 
 class ContentSegment {
   type: string = 'text';
   text: string = '';
   imageUrl: string = '';
+  originalImageUrl: string = '';
   isQuote: boolean = false;
 
   static makeText(text: string, isQuote: boolean = false): ContentSegment {
@@ -24,10 +26,11 @@ class ContentSegment {
     return seg;
   }
 
-  static makeImage(url: string): ContentSegment {
+  static makeImage(previewUrl: string, originalUrl: string = ''): ContentSegment {
     const seg = new ContentSegment();
     seg.type = 'image';
-    seg.imageUrl = url;
+    seg.imageUrl = previewUrl;
+    seg.originalImageUrl = originalUrl !== '' ? originalUrl : previewUrl;
     return seg;
   }
 }
@@ -35,6 +38,8 @@ class ContentSegment {
 @Entry
 @Component
 struct ArticleListPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State tid: string = '';
   @State subject: string = '帖子详情';
   @State articles: Article[] = [];
@@ -53,8 +58,7 @@ struct ArticleListPage {
   @State replyToFloor: number = -1;
   @State replyToUser: string = '';
   @State isReplying: boolean = false;
-  @State contentFontSize: number = 16; // 内容字体大小
-  @State titleFontSize: number = 17; // 标题字体大小
+  @State useOriginalImagesInPost: boolean = false;
   private apiHelper: NgaApi = new NgaApi();
 
   aboutToAppear() {
@@ -69,37 +73,14 @@ struct ArticleListPage {
         this.subject = String(titleParam);
       }
     }
-    this.loadFontSize();
+    this.updateInlineImageNetworkMode();
     if (this.tid != '') {
       this.loadArticles();
     }
   }
 
-  async loadFontSize() {
-    try {
-      const level = await PreferencesManager.getInstance().getString(AppConstants.PREF_FONT_SIZE, 'normal');
-      this.applyFontSize(level);
-    } catch (e) {
-      console.error('Load font size failed:', e);
-    }
-  }
-
-  applyFontSize(level: string) {
-    // 字体大小映射：small=更小, normal=标准, large=更大
-    switch (level) {
-      case 'small':
-        this.contentFontSize = 14;
-        this.titleFontSize = 15;
-        break;
-      case 'large':
-        this.contentFontSize = 18;
-        this.titleFontSize = 19;
-        break;
-      default: // normal
-        this.contentFontSize = 16;
-        this.titleFontSize = 17;
-        break;
-    }
+  onPageShow() {
+    this.updateInlineImageNetworkMode();
   }
 
   /** 头像首字：兼容中文与代理对（emoji 等） */
@@ -124,6 +105,61 @@ struct ArticleListPage {
     }
     const params: Record<string, Object> = { 'uid': id, 'name': username != null ? username : '' };
     router.pushUrl({ url: 'pages/profile/ProfilePage', params: params });
+  }
+
+  private refreshArticleList() {
+    this.articles = this.articles;
+  }
+
+  async updateInlineImageNetworkMode() {
+    try {
+      const defaultNet = await connection.getDefaultNet();
+      const netCapabilities = await connection.getNetCapabilities(defaultNet);
+      const bearerTypes = netCapabilities.bearerTypes || [];
+      let isWifiNetwork = false;
+      for (let i = 0; i < bearerTypes.length; i++) {
+        if (bearerTypes[i] === connection.NetBearType.BEARER_WIFI) {
+          isWifiNetwork = true;
+          break;
+        }
+      }
+      this.useOriginalImagesInPost = isWifiNetwork;
+    } catch (error) {
+      console.info('Detect network type failed:', JSON.stringify(error));
+      this.useOriginalImagesInPost = false;
+    }
+  }
+
+  async voteArticle(article: Article, value: number) {
+    if (!userManager.isLoggedIn()) {
+      promptAction.showToast({ message: '请先登录后再进行操作', duration: 1500 });
+      return;
+    }
+    if (article.isVoting) {
+      return;
+    }
+
+    article.isVoting = true;
+    this.refreshArticleList();
+
+    try {
+      const result = await ngaApi.voteArticle(article.tid || this.tid, article.pid, value);
+      const lowerResult = result.toLowerCase();
+      if (lowerResult.indexOf('成功') >= 0 || lowerResult.indexOf('ok') >= 0 || lowerResult.indexOf('支持') >= 0 || lowerResult.indexOf('反对') >= 0) {
+        if (article.voteValue !== 0) {
+          article.likes -= article.voteValue;
+        }
+        article.voteValue = value;
+        article.likes += value;
+      }
+      promptAction.showToast({ message: result, duration: 1500 });
+    } catch (err) {
+      console.error('vote article failed:', err);
+      promptAction.showToast({ message: '操作失败', duration: 1500 });
+    } finally {
+      article.isVoting = false;
+      this.refreshArticleList();
+    }
   }
 
   async saveBrowseHistory(tid: string, subject: string) {
@@ -458,19 +494,17 @@ struct ArticleListPage {
     // 去掉 HTML 标签（img 除外）
     processed = processed.replace(/<(?!\/?img)[^>]+>/g, '');
     // HTML 实体
-    processed = processed.replace(/&nbsp;/g, ' ');
-    processed = processed.replace(/&lt;/g, '<');
-    processed = processed.replace(/&gt;/g, '>');
-    processed = processed.replace(/&amp;/g, '&');
-    processed = processed.replace(/&quot;/g, '"');
+    processed = this.decodeHtmlEntities(processed);
 
     // 收集附件图片 URL 映射（按 attachs key / aid）
-    const attachMap: Map<string, string> = new Map();
+    const thumbToOriginalMap: Map<string, string> = new Map();
     for (let i = 0; i < attachments.length; i++) {
       const att = attachments[i];
       if (att.url) {
-        attachMap.set(att.id, att.url);
-        attachMap.set(String(i), att.url);
+        thumbToOriginalMap.set(att.url, att.url);
+      }
+      if (att.thumbUrl) {
+        thumbToOriginalMap.set(att.thumbUrl, att.url || att.thumbUrl);
       }
     }
 
@@ -532,7 +566,8 @@ struct ArticleListPage {
       if (imgUrl) {
         flushText();
         const normalizedUrl = this.apiHelper.normalizeImageUrl(imgUrl);
-        segments.push(ContentSegment.makeImage(normalizedUrl));
+        const originalUrl = thumbToOriginalMap.get(normalizedUrl) || normalizedUrl;
+        segments.push(ContentSegment.makeImage(normalizedUrl, originalUrl));
       }
 
       pos = imgEndPos + imgEndTag.length;
@@ -552,7 +587,10 @@ struct ArticleListPage {
       if (!hasImgInContent) {
         for (let i = 0; i < attachments.length; i++) {
           if (attachments[i].url && attachments[i].type.toString() === 'image') {
-            segments.push(ContentSegment.makeImage(attachments[i].url));
+            segments.push(ContentSegment.makeImage(
+              attachments[i].thumbUrl !== '' ? attachments[i].thumbUrl : attachments[i].url,
+              attachments[i].url
+            ));
           }
         }
       }
@@ -595,6 +633,51 @@ struct ArticleListPage {
     result = result.replace(/\[flash\][^\[]*\[\/flash\]/g, '[\u89C6\u9891]');
     result = result.replace(/\[\/?[a-zA-Z]+[^\]]*\]/g, '');
     result = result.replace(/\n{3,}/g, '\n\n');
+    return this.decodeHtmlEntities(result);
+  }
+
+  private decodeHtmlEntities(text: string): string {
+    if (!text) {
+      return '';
+    }
+
+    let result = text;
+    let changed = true;
+    let guard = 0;
+    while (changed && guard < 5) {
+      const before = result;
+      result = result.replace(/&nbsp;/g, ' ');
+      result = result.replace(/&amp;/g, '&');
+      result = result.replace(/&lt;/g, '<');
+      result = result.replace(/&gt;/g, '>');
+      result = result.replace(/&quot;/g, '"');
+      result = result.replace(/&#39;/g, '\'');
+      changed = before !== result;
+      guard++;
+    }
+
+    const reDec = /&#(\d+);/;
+    let decMatch = reDec.exec(result);
+    guard = 0;
+    while (decMatch != null && guard < 50) {
+      const code = parseInt(decMatch[1], 10);
+      const char = (!isNaN(code) && code > 0 && code < 0x110000) ? String.fromCharCode(code) : '';
+      result = result.replace(decMatch[0], char);
+      decMatch = reDec.exec(result);
+      guard++;
+    }
+
+    const reHex = /&#x([0-9a-fA-F]+);/;
+    let hexMatch = reHex.exec(result);
+    guard = 0;
+    while (hexMatch != null && guard < 50) {
+      const code = parseInt(hexMatch[1], 16);
+      const char = (!isNaN(code) && code > 0 && code < 0x110000) ? String.fromCharCode(code) : '';
+      result = result.replace(hexMatch[0], char);
+      hexMatch = reHex.exec(result);
+      guard++;
+    }
+
     return result;
   }
 
@@ -970,6 +1053,7 @@ struct ArticleListPage {
     }
     .width('100%')
     .height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
     .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 
@@ -1041,6 +1125,37 @@ struct ArticleListPage {
 
       // 底部互动栏
       Row() {
+        Row() {
+          Text('\u{1F44D}')
+            .fontSize(13)
+            .fontColor(article.voteValue === 1 ? ThemeColors.PRIMARY : ThemeColors.TEXT_SECONDARY_LIGHT)
+          Text('\u8D5E')
+            .fontSize(FontSize.SMALL)
+            .fontColor(article.voteValue === 1 ? ThemeColors.PRIMARY : ThemeColors.TEXT_SECONDARY_LIGHT)
+            .margin({ left: 4 })
+        }
+        .padding({ top: 4, bottom: 4 })
+        .opacity(article.isVoting ? 0.6 : 1)
+        .onClick(() => {
+          this.voteArticle(article, 1);
+        })
+
+        Row() {
+          Text('\u{1F44E}')
+            .fontSize(13)
+            .fontColor(article.voteValue === -1 ? ThemeColors.ERROR : ThemeColors.TEXT_SECONDARY_LIGHT)
+          Text('\u8E29')
+            .fontSize(FontSize.SMALL)
+            .fontColor(article.voteValue === -1 ? ThemeColors.ERROR : ThemeColors.TEXT_SECONDARY_LIGHT)
+            .margin({ left: 4 })
+        }
+        .margin({ left: 16 })
+        .padding({ top: 4, bottom: 4 })
+        .opacity(article.isVoting ? 0.6 : 1)
+        .onClick(() => {
+          this.voteArticle(article, -1);
+        })
+
         if (article.likes != 0) {
           Row() {
             Text(article.likes > 0 ? '\u{1F44D}' : '\u{1F44E}')
@@ -1050,6 +1165,7 @@ struct ArticleListPage {
               .fontColor(article.likes > 0 ? ThemeColors.SUCCESS : ThemeColors.ERROR)
               .margin({ left: 4 })
           }
+          .margin({ left: 10 })
         }
 
         Blank()
@@ -1057,9 +1173,7 @@ struct ArticleListPage {
         Text('\u56DE\u590D')
           .fontSize(FontSize.SMALL)
           .fontColor(ThemeColors.PRIMARY)
-          .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-          .borderRadius(BorderRadius.EXTRA_LARGE)
-          .backgroundColor(ThemeColors.PRIMARY_LIGHT)
+          .padding({ top: 4, bottom: 4 })
           .onClick(() => {
             this.openReplyTo(article);
           })
@@ -1079,8 +1193,8 @@ struct ArticleListPage {
   collectImageUrls(segments: ContentSegment[]): string[] {
     const urls: string[] = [];
     for (let i = 0; i < segments.length; i++) {
-      if (segments[i].type === 'image' && segments[i].imageUrl) {
-        urls.push(segments[i].imageUrl);
+      if (segments[i].type === 'image' && segments[i].originalImageUrl) {
+        urls.push(segments[i].originalImageUrl);
       }
     }
     return urls;
@@ -1104,29 +1218,36 @@ struct ArticleListPage {
     });
   }
 
+  private inlineImageUrl(seg: ContentSegment): string {
+    if (this.useOriginalImagesInPost && seg.originalImageUrl) {
+      return seg.originalImageUrl;
+    }
+    return seg.imageUrl;
+  }
+
   @Builder
   RichContent(article: Article) {
     Column() {
       ForEach(this.parseContentSegments(article.content, article.attachments),
         (seg: ContentSegment, segIndex: number) => {
           if (seg.type === 'image') {
-            Image(seg.imageUrl)
+            Image(this.inlineImageUrl(seg))
               .width('100%')
-              .constraintSize({ maxHeight: 400 })
               .objectFit(ImageFit.Contain)
               .borderRadius(BorderRadius.NORMAL)
               .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+              .constraintSize(this.useOriginalImagesInPost ? {} : { maxHeight: 400 })
               .margin({ top: 8, bottom: 4 })
               .onClick(() => {
                 const segments = this.parseContentSegments(article.content, article.attachments);
                 const allImgUrls = this.collectImageUrls(segments);
-                this.openImageViewer(allImgUrls, seg.imageUrl);
+                this.openImageViewer(allImgUrls, seg.originalImageUrl);
               })
           } else {
             Text(seg.text)
-              .fontSize(this.contentFontSize)
+              .fontSize(FontSize.ARTICLE_NORMAL)
               .fontColor(seg.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
-              .lineHeight(this.contentFontSize + 6)
+              .lineHeight(FontSize.ARTICLE_NORMAL + 6)
               .width('100%')
           }
         },

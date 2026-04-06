@@ -12,6 +12,8 @@ enum LoginStep {
 @Entry
 @Component
 struct LoginPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State username: string = '';
   @State password: string = '';
   @State captchaCode: string = '';
@@ -150,6 +152,7 @@ struct LoginPage {
     }
     .width('100%')
     .height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
     .backgroundColor(ThemeColors.SURFACE_LIGHT)
   }
 

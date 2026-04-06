@@ -10,13 +10,22 @@ import { BusinessError } from '@ohos.base';
 @Entry
 @Component
 struct ImageViewerPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State imageUrls: string[] = [];
   @State currentIndex: number = 0;
+  @State imageScale: number = 1;
+  @State imageTranslateX: number = 0;
+  @State imageTranslateY: number = 0;
+  @State showOriginalImage: boolean = false;
   @State showControls: boolean = true;
   @State showSaveDialog: boolean = false;
   @State isSaving: boolean = false;
   @State saveMessage: string = '';
   private swiperController: SwiperController = new SwiperController();
+  private pinchStartScale: number = 1;
+  private panStartX: number = 0;
+  private panStartY: number = 0;
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -152,6 +161,73 @@ struct ImageViewerPage {
     return '.jpg';
   }
 
+  resetZoomState() {
+    this.imageScale = 1;
+    this.imageTranslateX = 0;
+    this.imageTranslateY = 0;
+  }
+
+  clampScale(scale: number): number {
+    if (scale < 1) {
+      return 1;
+    }
+    if (scale > 4) {
+      return 4;
+    }
+    return scale;
+  }
+
+  toggleZoom() {
+    if (this.imageScale > 1.05) {
+      this.resetZoomState();
+    } else {
+      this.imageScale = 2;
+      this.imageTranslateX = 0;
+      this.imageTranslateY = 0;
+    }
+  }
+
+  toggleOriginalImage() {
+    this.showOriginalImage = !this.showOriginalImage;
+    this.resetZoomState();
+  }
+
+  @Builder
+  buildFitImage(url: string, index: number) {
+    Image(url)
+      .width('100%')
+      .height('100%')
+      .objectFit(ImageFit.Contain)
+      .draggable(false)
+      .scale({
+        x: this.currentIndex === index ? this.imageScale : 1,
+        y: this.currentIndex === index ? this.imageScale : 1
+      })
+      .translate({
+        x: this.currentIndex === index ? this.imageTranslateX : 0,
+        y: this.currentIndex === index ? this.imageTranslateY : 0
+      })
+  }
+
+  @Builder
+  buildOriginalImage(url: string) {
+    Scroll() {
+      Column() {
+        Image(url)
+          .width('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+      }
+      .width('100%')
+      .padding({ top: this.showControls ? 72 : 24, bottom: 24 })
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
   build() {
     Stack() {
       // 黑色背景
@@ -165,11 +241,11 @@ struct ImageViewerPage {
         Swiper(this.swiperController) {
           ForEach(this.imageUrls, (url: string, index: number) => {
             Column() {
-              Image(url)
-                .width('100%')
-                .height('100%')
-                .objectFit(ImageFit.Contain)
-                .draggable(false)
+              if (this.showOriginalImage) {
+                this.buildOriginalImage(url);
+              } else {
+                this.buildFitImage(url, index);
+              }
             }
             .width('100%')
             .height('100%')
@@ -178,10 +254,49 @@ struct ImageViewerPage {
               this.showControls = !this.showControls;
             })
             .gesture(
-              LongPressGesture({ repeat: false, duration: 600 })
-                .onAction(() => {
-                  this.showSaveDialog = true;
-                })
+              GestureGroup(
+                GestureMode.Parallel,
+                LongPressGesture({ repeat: false, duration: 600 })
+                  .onAction(() => {
+                    this.showSaveDialog = true;
+                  }),
+                TapGesture({ count: 2 })
+                  .onAction(() => {
+                    if (!this.showOriginalImage && this.currentIndex === index) {
+                      this.toggleZoom();
+                    }
+                  }),
+                PinchGesture({ fingers: 2 })
+                  .onActionStart(() => {
+                    if (!this.showOriginalImage && this.currentIndex === index) {
+                      this.pinchStartScale = this.imageScale;
+                    }
+                  })
+                  .onActionUpdate((event) => {
+                    if (this.showOriginalImage || this.currentIndex !== index) {
+                      return;
+                    }
+                    this.imageScale = this.clampScale(this.pinchStartScale * event.scale);
+                    if (this.imageScale <= 1.01) {
+                      this.imageTranslateX = 0;
+                      this.imageTranslateY = 0;
+                    }
+                  }),
+                PanGesture()
+                  .onActionStart(() => {
+                    if (!this.showOriginalImage && this.currentIndex === index) {
+                      this.panStartX = this.imageTranslateX;
+                      this.panStartY = this.imageTranslateY;
+                    }
+                  })
+                  .onActionUpdate((event) => {
+                    if (this.showOriginalImage || this.currentIndex !== index || this.imageScale <= 1.01) {
+                      return;
+                    }
+                    this.imageTranslateX = this.panStartX + event.offsetX;
+                    this.imageTranslateY = this.panStartY + event.offsetY;
+                  })
+              )
             )
           }, (url: string, index: number) => url + '_' + index)
         }
@@ -192,6 +307,7 @@ struct ImageViewerPage {
         .loop(false)
         .onChange((index: number) => {
           this.currentIndex = index;
+          this.resetZoomState();
         })
       }
 
@@ -218,15 +334,27 @@ struct ImageViewerPage {
 
             Blank()
 
-            Text('\u{2913}')
-              .fontSize(22)
-              .fontColor('#FFFFFF')
-              .width(48)
-              .height(48)
-              .textAlign(TextAlign.Center)
-              .onClick(() => {
-                this.showSaveDialog = true;
-              })
+            Row() {
+              Text('\u539F\u56FE')
+                .fontSize(FontSize.SMALL)
+                .fontColor(this.showOriginalImage ? '#FFD76A' : '#FFFFFF')
+                .fontWeight(FontWeight.Medium)
+                .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+                .onClick(() => {
+                  this.toggleOriginalImage();
+                })
+
+              Text('\u{2913}')
+                .fontSize(22)
+                .fontColor('#FFFFFF')
+                .width(48)
+                .height(48)
+                .textAlign(TextAlign.Center)
+                .onClick(() => {
+                  this.showSaveDialog = true;
+                })
+            }
+            .alignItems(VerticalAlign.Center)
           }
           .width('100%')
           .height(56)
@@ -288,9 +416,10 @@ struct ImageViewerPage {
           .borderRadius({ topLeft: BorderRadius.EXTRA_LARGE, topRight: BorderRadius.EXTRA_LARGE })
           .shadow({ radius: 16, color: '#00000030', offsetX: 0, offsetY: -4 })
         }
-        .width('100%')
-        .height('100%')
-        .backgroundColor(ThemeColors.OVERLAY_BG)
+    .width('100%')
+    .height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
+    .backgroundColor(ThemeColors.OVERLAY_BG)
       }
     }
     .width('100%')

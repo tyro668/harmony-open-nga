@@ -1,5 +1,6 @@
 import router from '@ohos.router';
 import { Topic } from '../../model/entity/Topic';
+import { User } from '../../model/entity/User';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 import { ThemeColors, FontSize, BorderRadius } from '../../common/constants/ThemeColors';
 
@@ -9,6 +10,8 @@ import { ThemeColors, FontSize, BorderRadius } from '../../common/constants/Them
 @Entry
 @Component
 struct HistoryPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State topics: Topic[] = [];
   @State isLoading: boolean = true;
   @State errorMsg: string = '';
@@ -29,7 +32,8 @@ struct HistoryPage {
       const jsonStr = await PreferencesManager.getInstance().getString(this.KEY_HISTORY);
       console.info('History jsonStr length: ' + jsonStr.length);
       if (jsonStr != '' && jsonStr.length > 2) {
-        this.topics = JSON.parse(jsonStr) as Topic[];
+        const parsed = JSON.parse(jsonStr) as Array<Record<string, Object>>;
+        this.topics = this.restoreTopics(parsed);
         console.info('Loaded ' + this.topics.length + ' history items');
       } else {
         this.topics = [];
@@ -50,6 +54,56 @@ struct HistoryPage {
 
   async removeHistory(index: number) { this.topics.splice(index, 1); await this.saveHistory(); }
   async clearHistory() { this.topics = []; await this.saveHistory(); }
+
+  private restoreTopics(items: Array<Record<string, Object>>): Topic[] {
+    const restored: Topic[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item == null || typeof item !== 'object') {
+        continue;
+      }
+
+      const topic = new Topic();
+      topic.tid = item['tid'] != null ? String(item['tid']) : '';
+      topic.fid = item['fid'] != null ? String(item['fid']) : '';
+      topic.forumName = item['forumName'] != null ? String(item['forumName']) : '';
+      topic.subject = item['subject'] != null ? String(item['subject']) : '';
+      topic.content = item['content'] != null ? String(item['content']) : '';
+      topic.postDate = item['postDate'] != null ? String(item['postDate']) : '';
+      topic.lastPostDate = item['lastPostDate'] != null ? String(item['lastPostDate']) : '';
+      topic.replies = item['replies'] != null ? Number(item['replies']) : 0;
+      topic.views = item['views'] != null ? Number(item['views']) : 0;
+      topic.likes = item['likes'] != null ? Number(item['likes']) : 0;
+      topic.isTop = item['isTop'] === true;
+      topic.isDigest = item['isDigest'] === true;
+      topic.isHot = item['isHot'] === true;
+      topic.isClosed = item['isClosed'] === true;
+      topic.hasAttachment = item['hasAttachment'] === true;
+      topic.hasImage = item['hasImage'] === true;
+      topic.lastPoster = item['lastPoster'] != null ? String(item['lastPoster']) : '';
+      topic.page = item['page'] != null ? Number(item['page']) : 1;
+      topic.totalPages = item['totalPages'] != null ? Number(item['totalPages']) : 1;
+
+      const authorData = item['author'];
+      const author = new User();
+      if (authorData != null && typeof authorData === 'object' && !Array.isArray(authorData)) {
+        const authorObj = authorData as Record<string, Object>;
+        author.uid = authorObj['uid'] != null ? String(authorObj['uid']) : '';
+        author.username = authorObj['username'] != null ? String(authorObj['username']) : '';
+        author.nickname = authorObj['nickname'] != null ? String(authorObj['nickname']) : '';
+        author.avatar = authorObj['avatar'] != null ? String(authorObj['avatar']) : '';
+      }
+      topic.author = author;
+
+      const tagsData = item['tags'];
+      if (tagsData != null && Array.isArray(tagsData)) {
+        topic.tags = (tagsData as Object[]).map((tag: Object) => String(tag));
+      }
+
+      restored.push(topic);
+    }
+    return restored;
+  }
 
   build() {
     Column() {
@@ -113,6 +167,6 @@ struct HistoryPage {
         .divider({ strokeWidth: 0 }).edgeEffect(EdgeEffect.Spring)
       }
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 }

@@ -10,6 +10,8 @@ import promptAction from '@ohos.promptAction';
 @Entry
 @Component
 struct TopicListPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State topics: Topic[] = [];
   @State boardName: string = '帖子列表';
   @State fid: number = 0;
@@ -28,6 +30,7 @@ struct TopicListPage {
 
   private listScroller: Scroller = new Scroller();
   private readonly REFRESH_THRESHOLD: number = 80;
+  private loadedTopicIds: Set<string> = new Set<string>();
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -89,43 +92,84 @@ struct TopicListPage {
     return s.substring(0, 1);
   }
 
+  private resetLoadedTopics() {
+    this.loadedTopicIds.clear();
+  }
+
+  private topicIdentity(topic: Topic): string {
+    if (topic.tid && topic.tid.length > 0) {
+      return topic.tid;
+    }
+    return topic.subject + '_' + topic.postDate + '_' + topic.author.username;
+  }
+
+  private appendUniqueTopics(incomingTopics: Topic[], refresh: boolean): number {
+    const uniqueTopics: Topic[] = [];
+    for (let i = 0; i < incomingTopics.length; i++) {
+      const topic = incomingTopics[i];
+      const topicId = this.topicIdentity(topic);
+      if (this.loadedTopicIds.has(topicId)) {
+        continue;
+      }
+      this.loadedTopicIds.add(topicId);
+      uniqueTopics.push(topic);
+    }
+
+    if (refresh) {
+      this.topics = uniqueTopics;
+    } else {
+      for (let i = 0; i < uniqueTopics.length; i++) {
+        this.topics.push(uniqueTopics[i]);
+      }
+    }
+
+    return uniqueTopics.length;
+  }
+
   async loadTopics(refresh: boolean = true) {
     if (refresh) {
       this.page = 1;
       this.loadingState = LoadingState.LOADING;
+      this.resetLoadedTopics();
     } else {
       this.isLoadingMore = true;
     }
 
     try {
-      const response = await ngaApi.getTopicList(this.fid, this.page, this.stid);
-      if (response.code === 200 && response.data) {
-        const topicList = response.data;
-        if (topicList.errorMsg) {
-          this.errorMsg = topicList.errorMsg;
+      let continueLoading = true;
+      while (continueLoading) {
+        continueLoading = false;
+        const response = await ngaApi.getTopicList(this.fid, this.page, this.stid);
+        if (response.code === 200 && response.data) {
+          const topicList = response.data;
+          if (topicList.errorMsg) {
+            this.errorMsg = topicList.errorMsg;
+            if (refresh) {
+              this.loadingState = LoadingState.ERROR;
+            } else {
+              this.page--;
+            }
+            return;
+          }
+
+          this.errorMsg = '';
+          const appendedCount = this.appendUniqueTopics(topicList.topics, refresh);
+          this.totalPages = topicList.totalPages;
+          this.hasMore = topicList.hasMore;
+          this.loadingState = this.topics.length > 0 ? LoadingState.SUCCESS : LoadingState.EMPTY;
+
+          if (!refresh && appendedCount === 0 && topicList.hasMore && this.page < topicList.totalPages) {
+            this.page++;
+            continueLoading = true;
+          }
+        } else {
+          this.errorMsg = response.message || '加载失败';
           if (refresh) {
             this.loadingState = LoadingState.ERROR;
           } else {
             this.page--;
           }
           return;
-        }
-        if (refresh) {
-          this.topics = topicList.topics;
-        } else {
-          for (let i = 0; i < topicList.topics.length; i++) {
-            this.topics.push(topicList.topics[i]);
-          }
-        }
-        this.totalPages = topicList.totalPages;
-        this.hasMore = topicList.hasMore;
-        this.loadingState = this.topics.length > 0 ? LoadingState.SUCCESS : LoadingState.EMPTY;
-      } else {
-        this.errorMsg = response.message || '加载失败';
-        if (refresh) {
-          this.loadingState = LoadingState.ERROR;
-        } else {
-          this.page--;
         }
       }
     } catch (error) {
@@ -371,6 +415,7 @@ struct TopicListPage {
     }
     .width('100%')
     .height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
     .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 

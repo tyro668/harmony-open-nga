@@ -32,6 +32,8 @@ export class AppConstants {
   static readonly PREF_BLACKLIST: string = 'pref_blacklist';
   static readonly PREF_FILTER_KEYWORDS: string = 'pref_filter_keywords';
   static readonly PREF_START_PAGE: string = 'pref_start_page';
+  static readonly PREF_SAVED_ACCOUNTS: string = 'pref_saved_accounts';
+  static readonly PREF_ACTIVE_ACCOUNT_UID: string = 'pref_active_account_uid';
 
   // 数据库名称
   static readonly DB_NAME: string = 'open_nga.db';
@@ -50,6 +52,8 @@ export class AppConstants {
   static readonly THEME_LIGHT: string = 'light';
   static readonly THEME_DARK: string = 'dark';
   static readonly THEME_SYSTEM: string = 'system';
+  static readonly THEME_CLASSIC: string = 'classic';
+  static readonly THEME_CREAM: string = 'cream';
 }
 
 /**

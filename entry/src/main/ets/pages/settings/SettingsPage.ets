@@ -1,29 +1,41 @@
 import router from '@ohos.router';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
-import { UserManager } from '../../common/manager/UserManager';
+import { UserManager, SavedAccount } from '../../common/manager/UserManager';
 import { AppConstants } from '../../common/constants/AppConstants';
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
+import { ThemeManager } from '../../common/manager/ThemeManager';
+import { FontManager } from '../../common/manager/FontManager';
 
 @Entry
 @Component
 struct SettingsPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State userName: string = '';
+  @State savedAccounts: SavedAccount[] = [];
   @State cacheSize: string = '0 KB';
   @State startPageIndex: number = 0;
   @State showStartPagePicker: boolean = false;
   @State fontSizeIndex: number = 1; // 0: 更小, 1: 标准, 2: 更大
   @State showFontSizePicker: boolean = false;
+  @State themeIndex: number = 0;
+  @State showThemePicker: boolean = false;
+  @State showAccountPicker: boolean = false;
 
   private startPageOptions: string[] = ['首页', '版块', '消息', '我的'];
   private fontSizeOptions: string[] = ['更小', '标准', '更大'];
+  private themeOptions: string[] = ['经典红', '淡黄色'];
+  private themeValues: string[] = [AppConstants.THEME_CLASSIC, AppConstants.THEME_CREAM];
 
   aboutToAppear() {
-    const user = UserManager.getInstance().getCurrentUser();
-    if (user != null) {
-      this.userName = user.getDisplayName();
-    }
+    this.refreshAccountState();
     this.loadStartPage();
     this.loadFontSize();
+    this.loadTheme();
+  }
+
+  onPageShow() {
+    this.refreshAccountState();
   }
 
   async loadStartPage() {
@@ -48,17 +60,13 @@ struct SettingsPage {
   }
 
   async loadFontSize() {
-    try {
-      const val = await PreferencesManager.getInstance().getString(AppConstants.PREF_FONT_SIZE, 'normal');
-      if (val === 'small') {
-        this.fontSizeIndex = 0;
-      } else if (val === 'large') {
-        this.fontSizeIndex = 2;
-      } else {
-        this.fontSizeIndex = 1;
-      }
-    } catch (e) {
-      console.error('Load font size setting failed:', e);
+    const val = FontManager.getCurrentLevel();
+    if (val === 'small') {
+      this.fontSizeIndex = 0;
+    } else if (val === 'large') {
+      this.fontSizeIndex = 2;
+    } else {
+      this.fontSizeIndex = 1;
     }
   }
 
@@ -70,11 +78,61 @@ struct SettingsPage {
       level = 'large';
     }
     try {
-      await PreferencesManager.getInstance().putString(AppConstants.PREF_FONT_SIZE, level);
+      await FontManager.setLevel(level);
       this.fontSizeIndex = index;
     } catch (e) {
       console.error('Save font size setting failed:', e);
     }
+  }
+
+  loadTheme() {
+    this.themeIndex = this.getThemeIndex(ThemeManager.getCurrentTheme());
+  }
+
+  async saveTheme(index: number) {
+    const themeValue = this.themeValues[index] || AppConstants.THEME_CLASSIC;
+    try {
+      await ThemeManager.setTheme(themeValue);
+      this.themeIndex = index;
+    } catch (e) {
+      console.error('Save theme setting failed:', e);
+    }
+  }
+
+  refreshAccountState() {
+    const user = UserManager.getInstance().getCurrentUser();
+    this.userName = user != null ? user.getDisplayName() : '';
+    this.savedAccounts = UserManager.getInstance().getSavedAccounts();
+  }
+
+  getSavedAccountSummary(): string {
+    if (this.savedAccounts.length === 0) {
+      return '';
+    }
+    return '' + this.savedAccounts.length + '\u4E2A\u8D26\u53F7';
+  }
+
+  getCurrentAccountUid(): string {
+    const user = UserManager.getInstance().getCurrentUser();
+    return user != null ? user.uid : '';
+  }
+
+  async switchAccount(uid: string) {
+    const switched = await UserManager.getInstance().switchAccount(uid);
+    if (switched) {
+      this.refreshAccountState();
+      this.showAccountPicker = false;
+    }
+  }
+
+  async logoutCurrentAccount() {
+    await UserManager.getInstance().logout();
+    this.refreshAccountState();
+  }
+
+  openAddAccount() {
+    this.showAccountPicker = false;
+    router.pushUrl({ url: 'pages/login/LoginPage' });
   }
 
   async clearCache() { this.cacheSize = '0 KB'; }
@@ -107,16 +165,27 @@ struct SettingsPage {
               if (this.userName != '') {
                 this.SettingRow('\u{1F464}', '\u5F53\u524D\u8D26\u53F7', this.userName, () => {})
                 Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-                this.SettingRow('\u{1F504}', '\u5207\u6362\u8D26\u53F7', '', () => {})
+                this.SettingRow('\u{1F504}', '\u5207\u6362\u8D26\u53F7', this.getSavedAccountSummary(), () => {
+                  this.showAccountPicker = true;
+                })
                 Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
                 this.SettingRow('\u{1F6AA}', '\u9000\u51FA\u767B\u5F55', '', () => {
-                  UserManager.getInstance().logout();
-                  router.back();
+                  this.logoutCurrentAccount();
                 })
               } else {
-                this.SettingRow('\u{1F464}', '\u767B\u5F55\u8D26\u53F7', '', () => {
-                  router.pushUrl({ url: 'pages/login/LoginPage' });
-                })
+                if (this.savedAccounts.length > 0) {
+                  this.SettingRow('\u{1F504}', '\u5207\u6362\u8D26\u53F7', this.getSavedAccountSummary(), () => {
+                    this.showAccountPicker = true;
+                  })
+                  Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
+                  this.SettingRow('\u{2795}', '\u6DFB\u52A0\u8D26\u53F7', '', () => {
+                    this.openAddAccount();
+                  })
+                } else {
+                  this.SettingRow('\u{1F464}', '\u767B\u5F55\u8D26\u53F7', '', () => {
+                    this.openAddAccount();
+                  })
+                }
               }
             }
             .backgroundColor(ThemeColors.CARD_BG)
@@ -145,13 +214,29 @@ struct SettingsPage {
               }
               .width('100%').height(52).padding({ left: 16, right: 16 })
               .onClick(() => { this.showStartPagePicker = true; })
-              
+
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-              this.SettingRow('\u{1F319}', '\u591C\u95F4\u6A21\u5F0F', '\u5173\u95ED', () => {})
+              Row() {
+                Text('\u{1F3A8}').fontSize(20).width(32).textAlign(TextAlign.Center)
+                Text('\u4E3B\u9898\u6A21\u5F0F')
+                  .fontSize(FontSize.MEDIUM)
+                  .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                  .margin({ left: 12 })
+                  .layoutWeight(1)
+                Text(this.themeOptions[this.themeIndex])
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                Text('\u{276F}')
+                  .fontSize(FontSize.NORMAL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .margin({ left: 8 })
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => { this.showThemePicker = true; })
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
               this.SettingRow('\u{1F514}', '\u6D88\u606F\u901A\u77E5', '\u5F00\u542F', () => {})
               Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-              
+
               // 字体大小设置行
               Row() {
                 Text('\u{1F524}').fontSize(20).width(32).textAlign(TextAlign.Center)
@@ -219,12 +304,22 @@ struct SettingsPage {
         this.StartPagePickerDialog()
       }
 
+      if (this.showAccountPicker) {
+        this.AccountPickerDialog()
+      }
+
+      // 主题选择弹窗
+      if (this.showThemePicker) {
+        this.ThemePickerDialog()
+      }
+
       // 字体大小选择弹窗
       if (this.showFontSizePicker) {
         this.FontSizePickerDialog()
       }
     }
     .width('100%').height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
   }
 
   @Builder
@@ -314,6 +409,212 @@ struct SettingsPage {
       case 3: return '\u{1F464}';
       default: return '\u{1F3E0}';
     }
+  }
+
+  getThemeIndex(theme: string): number {
+    for (let index = 0; index < this.themeValues.length; index++) {
+      if (this.themeValues[index] === theme) {
+        return index;
+      }
+    }
+    return 0;
+  }
+
+  getThemeDescription(index: number): string {
+    switch (index) {
+      case 1:
+        return '米白底色搭配柔和金黄，阅读氛围更温暖';
+      default:
+        return '保留当前应用的经典红色视觉风格';
+    }
+  }
+
+  @Builder
+  ThemePickerDialog() {
+    Column() {
+      Blank()
+        .layoutWeight(1)
+        .onClick(() => { this.showThemePicker = false; })
+
+      Column() {
+        Text('\u4E3B\u9898\u6A21\u5F0F')
+          .fontSize(FontSize.LARGE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+          .width('100%')
+          .padding({ left: 20, top: 20, bottom: 12 })
+
+        Text('\u9009\u62E9\u5E94\u7528\u6574\u4F53\u914D\u8272\u98CE\u683C')
+          .fontSize(FontSize.NORMAL)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          .width('100%')
+          .padding({ left: 20, bottom: 16 })
+
+        ForEach(this.themeOptions, (option: string, index: number) => {
+          Row() {
+            Column() {
+              Text(option)
+                .fontSize(FontSize.MEDIUM)
+                .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                .width('100%')
+
+              Text(this.getThemeDescription(index))
+                .fontSize(FontSize.SMALL)
+                .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                .margin({ top: 4 })
+                .width('100%')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            if (this.themeIndex === index) {
+              Text('\u{2713}')
+                .fontSize(18)
+                .fontColor(ThemeColors.PRIMARY)
+                .fontWeight(FontWeight.Bold)
+            }
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 14, bottom: 14 })
+          .backgroundColor(this.themeIndex === index ? ThemeColors.PRIMARY_LIGHT : Color.Transparent)
+          .onClick(() => {
+            this.saveTheme(index);
+            this.showThemePicker = false;
+          })
+
+          if (index < this.themeOptions.length - 1) {
+            Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 20 })
+          }
+        })
+
+        Text('\u53D6\u6D88')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .height(48)
+          .margin({ top: 8 })
+          .onClick(() => { this.showThemePicker = false; })
+      }
+      .width('100%')
+      .backgroundColor(ThemeColors.CARD_BG)
+      .borderRadius({ topLeft: BorderRadius.EXTRA_LARGE, topRight: BorderRadius.EXTRA_LARGE })
+      .shadow({ radius: 16, color: '#00000020', offsetX: 0, offsetY: -4 })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(ThemeColors.OVERLAY_BG)
+  }
+
+  @Builder
+  AccountPickerDialog() {
+    Column() {
+      Blank()
+        .layoutWeight(1)
+        .onClick(() => { this.showAccountPicker = false; })
+
+      Column() {
+        Text('\u5207\u6362\u8D26\u53F7')
+          .fontSize(FontSize.LARGE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+          .width('100%')
+          .padding({ left: 20, top: 20, bottom: 12 })
+
+        Text('\u5DF2\u767B\u5F55\u8FC7\u7684\u8D26\u53F7\u4F1A\u4FDD\u5B58\u5728\u8FD9\u91CC\uFF0C\u53EF\u4EE5\u76F4\u63A5\u5207\u6362')
+          .fontSize(FontSize.NORMAL)
+          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          .width('100%')
+          .padding({ left: 20, right: 20, bottom: 16 })
+
+        if (this.savedAccounts.length === 0) {
+          Column() {
+            Text('\u6682\u65E0\u5DF2\u4FDD\u5B58\u8D26\u53F7')
+              .fontSize(FontSize.MEDIUM)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              .margin({ top: 8, bottom: 16 })
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20 })
+        } else {
+          ForEach(this.savedAccounts, (account: SavedAccount, index: number) => {
+            Row() {
+              Circle()
+                .width(34)
+                .height(34)
+                .fill(account.uid === this.getCurrentAccountUid() ? ThemeColors.PRIMARY_LIGHT : ThemeColors.SEARCH_BG)
+              Text((account.userName && account.userName.length > 0) ? account.userName.substring(0, 1) : '\u{1F464}')
+                .fontSize(16)
+                .fontColor(ThemeColors.PRIMARY)
+                .fontWeight(FontWeight.Bold)
+                .margin({ left: -25 })
+
+              Column() {
+                Text(account.userName != '' ? account.userName : ('UID ' + account.uid))
+                  .fontSize(FontSize.MEDIUM)
+                  .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                  .width('100%')
+                Text('UID ' + account.uid)
+                  .fontSize(FontSize.SMALL)
+                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                  .margin({ top: 4 })
+                  .width('100%')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+              .margin({ left: 12 })
+
+              if (account.uid === this.getCurrentAccountUid()) {
+                Text('\u5F53\u524D')
+                  .fontSize(FontSize.SMALL)
+                  .fontColor(ThemeColors.PRIMARY)
+                  .backgroundColor(ThemeColors.PRIMARY_LIGHT)
+                  .borderRadius(BorderRadius.EXTRA_LARGE)
+                  .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+              } else {
+                Text('\u5207\u6362')
+                  .fontSize(FontSize.SMALL)
+                  .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+              }
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 14, bottom: 14 })
+            .backgroundColor(account.uid === this.getCurrentAccountUid() ? ThemeColors.PRIMARY_LIGHT : Color.Transparent)
+            .onClick(() => {
+              this.switchAccount(account.uid);
+            })
+
+            if (index < this.savedAccounts.length - 1) {
+              Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 20 })
+            }
+          })
+        }
+
+        Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ top: 8 })
+        Text('\u6DFB\u52A0\u65B0\u8D26\u53F7')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.PRIMARY)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .height(52)
+          .onClick(() => { this.openAddAccount(); })
+
+        Text('\u53D6\u6D88')
+          .fontSize(FontSize.MEDIUM)
+          .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .height(48)
+          .onClick(() => { this.showAccountPicker = false; })
+      }
+      .width('100%')
+      .backgroundColor(ThemeColors.CARD_BG)
+      .borderRadius({ topLeft: BorderRadius.EXTRA_LARGE, topRight: BorderRadius.EXTRA_LARGE })
+      .shadow({ radius: 16, color: '#00000020', offsetX: 0, offsetY: -4 })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(ThemeColors.OVERLAY_BG)
   }
 
   @Builder

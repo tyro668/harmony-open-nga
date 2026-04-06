@@ -3,6 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { PreferencesManager } from '../data/preferences/PreferencesManager';
 import { userManager } from '../common/manager/UserManager';
+import { ThemeManager } from '../common/manager/ThemeManager';
+import { FontManager } from '../common/manager/FontManager';
 
 const DOMAIN = 0x0000;
 const TAG = 'EntryAbility';
@@ -24,9 +26,15 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageCreate');
 
-    // 严格按顺序初始化：Preferences → UserManager → 加载页面
+    // 严格按顺序初始化：Preferences → ThemeManager → FontManager → UserManager → 加载页面
     PreferencesManager.getInstance().init(this.context).then(() => {
       hilog.info(DOMAIN, TAG, 'PreferencesManager initialized');
+      return ThemeManager.init();
+    }).then(() => {
+      hilog.info(DOMAIN, TAG, 'ThemeManager initialized');
+      return FontManager.init();
+    }).then(() => {
+      hilog.info(DOMAIN, TAG, 'FontManager initialized');
       return userManager.init();
     }).then(() => {
       hilog.info(DOMAIN, TAG, 'UserManager initialized, isLoggedIn=%{public}s',

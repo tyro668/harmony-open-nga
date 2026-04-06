@@ -144,21 +144,31 @@ export class NgaApi {
   }
 
   /**
-   * 清洗昵称中的 HTML 标签与常见实体（接口有时会把 author 带标签返回）
+   * 解码纯文本中的 HTML 实体。
    */
-  private sanitizeDisplayName(raw: string): string {
+  private decodeHtmlEntities(raw: string): string {
     if (raw == null || raw === '') {
       return '';
     }
-    let s = String(raw).replace(/<[^>]*>/g, '');
-    s = s.replace(/&nbsp;/g, ' ');
-    s = s.replace(/&amp;/g, '&');
-    s = s.replace(/&lt;/g, '<');
-    s = s.replace(/&gt;/g, '>');
-    s = s.replace(/&quot;/g, '"');
+    let s = String(raw);
+
+    let changed = true;
+    let guard = 0;
+    while (changed && guard < 5) {
+      const before = s;
+      s = s.replace(/&nbsp;/g, ' ');
+      s = s.replace(/&amp;/g, '&');
+      s = s.replace(/&lt;/g, '<');
+      s = s.replace(/&gt;/g, '>');
+      s = s.replace(/&quot;/g, '"');
+      s = s.replace(/&#39;/g, '\'');
+      changed = before !== s;
+      guard++;
+    }
+
     const reDec = /&#(\d+);/;
     let m = reDec.exec(s);
-    let guard = 0;
+    guard = 0;
     while (m != null && guard < 50) {
       const code = parseInt(m[1], 10);
       const ch = (!isNaN(code) && code > 0 && code < 0x110000) ? String.fromCharCode(code) : '';
@@ -166,6 +176,7 @@ export class NgaApi {
       m = reDec.exec(s);
       guard++;
     }
+
     const reHex = /&#x([0-9a-fA-F]+);/;
     m = reHex.exec(s);
     guard = 0;
@@ -176,6 +187,19 @@ export class NgaApi {
       m = reHex.exec(s);
       guard++;
     }
+
+    return s;
+  }
+
+  /**
+   * 清洗昵称中的 HTML 标签与常见实体（接口有时会把 author 带标签返回）
+   */
+  private sanitizeDisplayName(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    let s = String(raw).replace(/<[^>]*>/g, '');
+    s = this.decodeHtmlEntities(s);
     return s.trim();
   }
 
@@ -311,6 +335,47 @@ export class NgaApi {
     }
 
     return result;
+  }
+
+  async voteArticle(tid: string, pid: string, value: number): Promise<string> {
+    const body = 'tid=' + encodeURIComponent(tid) +
+      '&pid=' + encodeURIComponent(pid) +
+      '&value=' + encodeURIComponent(String(value));
+    const response = await this.http.post('/nuke.php?__lib=topic_recommend&__act=add&raw=3&__output=8', body);
+    if (response.code !== 200) {
+      return response.message !== '' ? response.message : '操作失败';
+    }
+
+    const raw = response.raw || '';
+    if (raw === '') {
+      return '服务器返回空响应';
+    }
+
+    try {
+      let jsonStr = raw;
+      const prefix = 'window.script_muti_get_var_store=';
+      if (jsonStr.indexOf(prefix) === 0) {
+        jsonStr = jsonStr.substring(prefix.length);
+      }
+
+      const jsonObj = JSON.parse(jsonStr) as Record<string, Object>;
+      const errMsg = this.extractErrorMsg(jsonObj);
+      if (errMsg !== '') {
+        return errMsg;
+      }
+
+      const data = jsonObj['data'];
+      if (data != null && typeof data === 'object' && !Array.isArray(data)) {
+        const dataObj = data as Record<string, Object>;
+        if (dataObj['0'] != null) {
+          return String(dataObj['0']);
+        }
+      }
+      return '操作成功';
+    } catch (err) {
+      console.error('voteArticle parse failed:', err);
+      return response.message !== '' ? response.message : '操作失败';
+    }
   }
 
   /**
@@ -684,7 +749,7 @@ export class NgaApi {
         const topic = new Topic();
         topic.tid = String(item['tid'] != null ? item['tid'] : '');
         topic.fid = String(item['fid'] != null ? item['fid'] : '');
-        topic.subject = item['subject'] != null ? String(item['subject']) : '';
+        topic.subject = item['subject'] != null ? this.decodeHtmlEntities(String(item['subject'])) : '';
         const topicAuthorRaw = item['author'] != null ? String(item['author']) : '';
         topic.author.username = this.sanitizeDisplayName(topicAuthorRaw);
         const topicAid = item['authorid'] != null ? item['authorid'] : item['userid'];
@@ -694,7 +759,7 @@ export class NgaApi {
         topic.replies = item['replies'] != null ? (item['replies'] as number) : 0;
         const lastPoster = item['lastposter'];
         if (lastPoster != null) {
-          topic.lastPoster = String(lastPoster);
+          topic.lastPoster = this.decodeHtmlEntities(String(lastPoster));
         }
 
         list.topics.push(topic);
@@ -796,7 +861,7 @@ export class NgaApi {
           list.tid = String(threadMeta['tid']);
         }
         if (threadMeta['subject'] != null) {
-          list.subject = String(threadMeta['subject']);
+          list.subject = this.decodeHtmlEntities(String(threadMeta['subject']));
         }
         const ta = threadMeta['authorid'] != null ? threadMeta['authorid'] :
           (threadMeta['userid'] != null ? threadMeta['userid'] : threadMeta['posterid']);
@@ -952,7 +1017,7 @@ export class NgaApi {
             }
             const subject = item['subject'];
             if (subject != null && String(subject) !== '') {
-              article.noteInfo = String(subject);
+              article.noteInfo = this.decodeHtmlEntities(String(subject));
             }
 
             const attachsField = item['attachs'];

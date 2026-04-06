@@ -9,6 +9,8 @@ import { ThemeColors, FontSize, BorderRadius } from '../../common/constants/Them
 @Entry
 @Component
 struct FavoritePage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State bookmarkBoards: Board[] = [];
   @State isLoading: boolean = true;
 
@@ -103,6 +105,6 @@ struct FavoritePage {
         .divider({ strokeWidth: 0 }).edgeEffect(EdgeEffect.Spring)
       }
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 }

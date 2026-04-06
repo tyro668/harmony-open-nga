@@ -29,6 +29,8 @@ class NotificationInfo {
 @Entry
 @Component
 struct NotificationPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State notifications: NotificationInfo[] = [];
   @State loadingState: LoadingState = LoadingState.LOADING;
 
@@ -164,6 +166,6 @@ struct NotificationPage {
         .divider({ strokeWidth: 0 }).edgeEffect(EdgeEffect.Spring)
       }
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 }

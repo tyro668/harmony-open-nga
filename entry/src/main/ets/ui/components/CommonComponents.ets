@@ -13,6 +13,7 @@ export enum LoadingState {
 
 @Component
 export struct LoadingView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop state: LoadingState = LoadingState.LOADING;
   @Prop errorText: string = '加载失败';
   @Prop emptyText: string = '暂无数据';
@@ -76,6 +77,7 @@ export struct LoadingView {
 
 @Component
 export struct EmptyView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop message: string = '暂无数据';
 
   build() {
@@ -97,6 +99,7 @@ export struct EmptyView {
 
 @Component
 export struct ErrorView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop message: string = '出错了';
   onRetry?: () => void;
 
@@ -135,6 +138,7 @@ export struct ErrorView {
 
 @Component
 export struct AvatarView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop url: string = '';
   @Prop avatarSize: number = 40;
   @Prop placeholder: string = '';
@@ -163,6 +167,7 @@ export struct AvatarView {
 
 @Component
 export struct TagView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop text: string = '';
   @Prop color: string = ThemeColors.TAG_BG;
   @Prop textColor: string = ThemeColors.TAG_TEXT;
@@ -179,6 +184,7 @@ export struct TagView {
 
 @Component
 export struct DividerView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Prop dividerColor: string = ThemeColors.DIVIDER_LIGHT;
   @Prop dividerHeight: number = 0.5;
   @Prop dividerMargin: number = 0;
@@ -193,6 +199,7 @@ export struct DividerView {
 
 @Component
 export struct ListItemView {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @BuilderParam content: () => void;
   @Prop itemPadding: number = Spacing.MEDIUM;
   onItemClick?: () => void;
@@ -214,6 +221,7 @@ export struct ListItemView {
 
 @Component
 export struct SearchBar {
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @Link text: string;
   @Prop placeholder: string = '搜索';
   onSearch?: (text: string) => void;

@@ -110,6 +110,12 @@ cd harmony-open-nga
 
 ### 4. 运行项目
 
+### 编译检查
+
+```bash
+/Applications/DevEco-Studio.app/Contents/tools/node/bin/node /Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw.js --mode module -p module=entry@default -p product=default -p requiredDeviceType=phone assembleHap --analyze=normal --parallel --incremental --daemon 2>&1 | tail -35
+```
+
 #### 方式一：使用 DevEco Studio
 
 1. 连接鸿蒙设备或启动模拟器

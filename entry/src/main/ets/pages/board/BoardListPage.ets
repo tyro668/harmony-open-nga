@@ -6,6 +6,8 @@ import { ThemeColors, FontSize, BorderRadius } from '../../common/constants/Them
 @Entry
 @Component
 struct BoardListPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State categories: BoardCategory[] = [];
   @State bookmarkBoards: Board[] = [];
   @State expandedCategories: Set<string> = new Set<string>();
@@ -81,7 +83,7 @@ struct BoardListPage {
         this.CategoryList();
       }
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 
   @Builder

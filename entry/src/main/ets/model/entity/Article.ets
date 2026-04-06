@@ -43,6 +43,8 @@ export class Article {
   postDate: string = '';
   likes: number = 0;
   isLiked: boolean = false;
+  voteValue: number = 0;
+  isVoting: boolean = false;
   attachments: Attachment[] = [];
   replyTo: string = '';
   replyToFloor: number = 0;

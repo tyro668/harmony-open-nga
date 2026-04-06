@@ -12,6 +12,8 @@ import router from '@ohos.router';
 @Entry
 @Component
 struct MainPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State currentIndex: number = 0;
   private tabsController: TabsController = new TabsController();
   @State initialized: boolean = false;
@@ -203,6 +205,7 @@ struct MainPage {
     }
     .width('100%')
     .height('100%')
+    .opacity(this.appTheme.length > 0 ? 1 : 1)
     .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 
@@ -882,11 +885,6 @@ struct MainPage {
             Column() {
               this.ProfileMenuItem('\u{2699}\u{FE0F}', '设置', () => {
                 router.pushUrl({ url: 'pages/settings/SettingsPage' });
-              })
-              Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
-              this.ProfileMenuItem('\u{1F6AA}', '退出登录', () => {
-                userManager.logout();
-                this.user = null;
               })
             }
             .width('100%')

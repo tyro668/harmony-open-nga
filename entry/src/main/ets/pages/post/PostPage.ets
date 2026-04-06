@@ -15,6 +15,8 @@ class PostDraft {
 @Entry
 @Component
 struct PostPage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State subject: string = '';
   @State content: string = '';
   @State isAnonymous: boolean = false;
@@ -195,7 +197,7 @@ struct PostPage {
       .layoutWeight(1)
       .backgroundColor(ThemeColors.SURFACE_LIGHT)
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 
   @Builder

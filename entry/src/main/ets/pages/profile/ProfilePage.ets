@@ -23,6 +23,8 @@ class ProfileData {
 @Entry
 @Component
 struct ProfilePage {
+  @StorageLink('pref_theme') appTheme: string = 'classic';
+  @StorageLink('pref_font_size') fontSizeLevel: string = 'normal';
   @State profile: ProfileData = new ProfileData();
   @State loadingState: LoadingState = LoadingState.LOADING;
   @State uid: string = '';
@@ -386,7 +388,7 @@ struct ProfilePage {
         .layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
       }
     }
-    .width('100%').height('100%').backgroundColor(ThemeColors.BACKGROUND_LIGHT)
+    .width('100%').height('100%').opacity(this.appTheme.length > 0 ? 1 : 1).backgroundColor(ThemeColors.BACKGROUND_LIGHT)
   }
 
   @Builder
