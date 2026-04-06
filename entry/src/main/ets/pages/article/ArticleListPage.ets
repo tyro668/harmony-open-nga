@@ -857,11 +857,27 @@ struct ArticleListPage {
         .layoutWeight(1)
         .margin({ left: 4 })
 
-        Text('\u{1F504}')
-          .fontSize(18)
+        Stack() {
+          Circle()
+            .width(36)
+            .height(36)
+            .fill(this.isLoading ? ThemeColors.PRIMARY_LIGHT : ThemeColors.SEARCH_BG)
+
+          if (this.isLoading) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(ThemeColors.PRIMARY)
+          } else {
+            Text('\u27F3')
+              .fontSize(17)
+              .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(ThemeColors.FONT_FAMILY_UI)
+          }
+        }
           .width(40)
           .height(48)
-          .textAlign(TextAlign.Center)
           .onClick(() => {
             this.page = 1;
             this.loadArticles();

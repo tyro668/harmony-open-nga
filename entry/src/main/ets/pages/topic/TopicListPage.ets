@@ -216,6 +216,22 @@ struct TopicListPage {
     }
   }
 
+  private scrollTopicListToTop() {
+    if (this.topics.length === 0) {
+      return;
+    }
+    try {
+      this.listScroller.scrollEdge(Edge.Top);
+    } catch (error) {
+      console.error('Scroll topic list to top failed:', error);
+    }
+  }
+
+  private refreshFromToolbar() {
+    this.scrollTopicListToTop();
+    this.doRefresh();
+  }
+
   build() {
     Column() {
       // 顶部导航栏
@@ -238,12 +254,28 @@ struct TopicListPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ left: 4 })
 
-        Text('\u{1F504}')
-          .fontSize(18)
+        Stack() {
+          Circle()
+            .width(36)
+            .height(36)
+            .fill(this.isRefreshing ? ThemeColors.PRIMARY_LIGHT : ThemeColors.SEARCH_BG)
+
+          if (this.isRefreshing) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(ThemeColors.PRIMARY)
+          } else {
+            Text('\u27F3')
+              .fontSize(17)
+              .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(ThemeColors.FONT_FAMILY_UI)
+          }
+        }
           .width(44)
           .height(44)
-          .textAlign(TextAlign.Center)
-          .onClick(() => { this.doRefresh(); })
+          .onClick(() => { this.refreshFromToolbar(); })
 
         // 菜单按钮
         Text('\u22EF')

@@ -203,6 +203,61 @@ export class NgaApi {
     return s.trim();
   }
 
+  private isGenericAnonymousDisplayName(raw: string): boolean {
+    const s = this.sanitizeDisplayName(raw);
+    return s === '匿名' || s === '匿名用户' || s === 'Anonymous';
+  }
+
+  private isLikelyOpaqueDisplayName(raw: string): boolean {
+    const s = this.sanitizeDisplayName(raw);
+    if (s === '') {
+      return false;
+    }
+    if (/[\u3400-\u9FFF]/.test(s) || /\s/.test(s) || /[\u00B7\u30FB]/.test(s)) {
+      return false;
+    }
+    if (/^[0-9]{8,}$/.test(s)) {
+      return true;
+    }
+    if (/^[0-9a-f]{12,}$/i.test(s)) {
+      return true;
+    }
+    if (/^[A-Za-z0-9_+=/-]{12,}$/.test(s) && /[A-Za-z]/.test(s) && /\d/.test(s)) {
+      return true;
+    }
+    return false;
+  }
+
+  private pickDisplayName(primary: string, secondary: string, tertiary: string): string {
+    const candidates = [primary, secondary, tertiary];
+    let genericFallback = '';
+    let opaqueFallback = '';
+
+    for (let i = 0; i < candidates.length; i++) {
+      const name = this.sanitizeDisplayName(candidates[i]);
+      if (name === '' || name === 'null' || name === 'undefined') {
+        continue;
+      }
+      if (this.isGenericAnonymousDisplayName(name)) {
+        if (genericFallback === '') {
+          genericFallback = name;
+        }
+        continue;
+      }
+      if (!this.isLikelyOpaqueDisplayName(name)) {
+        return name;
+      }
+      if (opaqueFallback === '') {
+        opaqueFallback = name;
+      }
+    }
+
+    if (genericFallback !== '') {
+      return genericFallback;
+    }
+    return opaqueFallback;
+  }
+
   /**
    * read.php 的 __T 可能是单层主题对象，也可能是以 tid 为键的嵌套对象
    */
@@ -966,6 +1021,8 @@ export class NgaApi {
             let authorIdStr = this.positiveUidString(idFromPost);
             const directAuthorRaw = item['author'] != null ? String(item['author']) : '';
             const directAuthor = this.sanitizeDisplayName(directAuthorRaw);
+            let userNameCandidate = '';
+            let userNicknameCandidate = '';
 
             const userInfo = this.findUserRecordForPost(userMap, userRecords, authorIdStr, directAuthor);
             if (userInfo != null) {
@@ -978,18 +1035,19 @@ export class NgaApi {
               }
               const uname = userInfo['username'];
               if (uname != null) {
-                article.author.username = this.sanitizeDisplayName(String(uname));
+                userNameCandidate = String(uname);
               }
               const nickname = userInfo['nickname'];
               if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
-                article.author.username = this.sanitizeDisplayName(String(nickname));
+                userNicknameCandidate = String(nickname);
               }
             }
             if (authorIdStr !== '') {
               article.author.uid = authorIdStr;
             }
-            if (!article.author.username && directAuthor !== '') {
-              article.author.username = directAuthor;
+            const resolvedAuthorName = this.pickDisplayName(directAuthor, userNicknameCandidate, userNameCandidate);
+            if (resolvedAuthorName !== '') {
+              article.author.username = resolvedAuthorName;
             }
 
             const isFirstPost = (i === 0) || (article.floor === 0);
