@@ -17,6 +17,7 @@ oh_modules/
 # 本地配置
 local.properties
 *.local.json5
+.sign/
 
 # 日志和临时文件
 *.log

@@ -25,12 +25,11 @@ struct TopicListPage {
   @State errorMsg: string = '';
   @State showMenu: boolean = false;
   @State isBookmarked: boolean = false;
-  @State scrollOffset: number = 0;
-  @State showRefreshHint: boolean = false;
 
   private listScroller: Scroller = new Scroller();
   private readonly REFRESH_THRESHOLD: number = 80;
   private loadedTopicIds: Set<string> = new Set<string>();
+  private refreshInFlight: boolean = false;
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -127,10 +126,12 @@ struct TopicListPage {
   }
 
   async loadTopics(refresh: boolean = true) {
+    const hasVisibleTopics = this.topics.length > 0;
     if (refresh) {
       this.page = 1;
-      this.loadingState = LoadingState.LOADING;
-      this.resetLoadedTopics();
+      if (!hasVisibleTopics) {
+        this.loadingState = LoadingState.LOADING;
+      }
     } else {
       this.isLoadingMore = true;
     }
@@ -144,8 +145,10 @@ struct TopicListPage {
           const topicList = response.data;
           if (topicList.errorMsg) {
             this.errorMsg = topicList.errorMsg;
-            if (refresh) {
+            if (refresh && !hasVisibleTopics) {
               this.loadingState = LoadingState.ERROR;
+            } else if (refresh) {
+              promptAction.showToast({ message: this.errorMsg });
             } else {
               this.page--;
             }
@@ -153,6 +156,9 @@ struct TopicListPage {
           }
 
           this.errorMsg = '';
+          if (refresh) {
+            this.resetLoadedTopics();
+          }
           const appendedCount = this.appendUniqueTopics(topicList.topics, refresh);
           this.totalPages = topicList.totalPages;
           this.hasMore = topicList.hasMore;
@@ -164,8 +170,10 @@ struct TopicListPage {
           }
         } else {
           this.errorMsg = response.message || '加载失败';
-          if (refresh) {
+          if (refresh && !hasVisibleTopics) {
             this.loadingState = LoadingState.ERROR;
+          } else if (refresh) {
+            promptAction.showToast({ message: this.errorMsg });
           } else {
             this.page--;
           }
@@ -175,8 +183,10 @@ struct TopicListPage {
     } catch (error) {
       console.error('Load topics failed:', error);
       this.errorMsg = '网络错误';
-      if (refresh) {
+      if (refresh && !hasVisibleTopics) {
         this.loadingState = LoadingState.ERROR;
+      } else if (refresh) {
+        promptAction.showToast({ message: this.errorMsg });
       } else {
         this.page--;
       }
@@ -193,10 +203,17 @@ struct TopicListPage {
   }
 
   async doRefresh() {
-    if (this.isRefreshing) return;
+    if (this.refreshInFlight) {
+      return;
+    }
+    this.refreshInFlight = true;
     this.isRefreshing = true;
-    await this.loadTopics(true);
-    this.isRefreshing = false;
+    try {
+      await this.loadTopics(true);
+    } finally {
+      this.isRefreshing = false;
+      this.refreshInFlight = false;
+    }
   }
 
   build() {
@@ -226,7 +243,7 @@ struct TopicListPage {
           .width(44)
           .height(44)
           .textAlign(TextAlign.Center)
-          .onClick(() => { this.loadTopics(); })
+          .onClick(() => { this.doRefresh(); })
 
         // 菜单按钮
         Text('\u22EF')
@@ -336,77 +353,53 @@ struct TopicListPage {
         .justifyContent(FlexAlign.Center)
       } else {
         Stack() {
-          List({ scroller: this.listScroller }) {
-            ForEach(this.topics, (topic: Topic) => {
-              ListItem() {
-                this.TopicCard(topic);
-              }
-            })
-
-            if (this.hasMore) {
-              ListItem() {
-                Row() {
-                  if (this.isLoadingMore) {
-                    LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
-                    Text('加载中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                      .margin({ left: 8 })
-                  } else {
-                    Text('上拉加载更多').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                  }
+          Refresh({ refreshing: $$this.isRefreshing }) {
+            List({ scroller: this.listScroller }) {
+              ForEach(this.topics, (topic: Topic) => {
+                ListItem() {
+                  this.TopicCard(topic);
                 }
-                .width('100%')
-                .height(50)
-                .justifyContent(FlexAlign.Center)
-              }
-            } else if (this.topics.length > 0) {
-              ListItem() {
-                Text('\u2014 \u5DF2\u7ECF\u5230\u5E95\u4E86 \u2014')
-                  .fontSize(FontSize.SMALL)
-                  .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              })
+
+              if (this.hasMore) {
+                ListItem() {
+                  Row() {
+                    if (this.isLoadingMore) {
+                      LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
+                      Text('加载中...').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                        .margin({ left: 8 })
+                    } else {
+                      Text('上拉加载更多').fontSize(FontSize.SMALL).fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                    }
+                  }
                   .width('100%')
-                  .textAlign(TextAlign.Center)
-                  .padding(20)
+                  .height(50)
+                  .justifyContent(FlexAlign.Center)
+                }
+              } else if (this.topics.length > 0) {
+                ListItem() {
+                  Text('\u2014 \u5DF2\u7ECF\u5230\u5E95\u4E86 \u2014')
+                    .fontSize(FontSize.SMALL)
+                    .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                    .width('100%')
+                    .textAlign(TextAlign.Center)
+                    .padding(20)
+                }
               }
             }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 8 })
+            .edgeEffect(EdgeEffect.Spring)
+            .divider({ strokeWidth: 0 })
+            .onReachEnd(() => { this.loadMore(); })
           }
           .layoutWeight(1)
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8 })
-          .edgeEffect(EdgeEffect.Spring)
-          .divider({ strokeWidth: 0 })
-          .onReachEnd(() => { this.loadMore(); })
-          .onScroll((scrollOffset: number, scrollState: ScrollState) => {
-            this.scrollOffset = scrollOffset;
-            // 当下拉超过阈值时显示提示
-            if (scrollOffset < -this.REFRESH_THRESHOLD && !this.isRefreshing) {
-              this.showRefreshHint = true;
-            } else if (scrollOffset >= 0) {
-              this.showRefreshHint = false;
-            }
+          .refreshOffset(this.REFRESH_THRESHOLD)
+          .pullToRefresh(true)
+          .onRefreshing(() => {
+            this.doRefresh();
           })
-          .onScrollStop(() => {
-            // 停止滚动时，如果下拉足够则触发刷新
-            if (this.scrollOffset < -this.REFRESH_THRESHOLD && !this.isRefreshing) {
-              this.doRefresh();
-            }
-            this.showRefreshHint = false;
-          })
-
-          // 下拉刷新指示器（覆盖在顶部）
-          if (this.isRefreshing || this.showRefreshHint) {
-            Row() {
-              LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
-              Text(this.isRefreshing ? '刷新中...' : '下拉刷新')
-                .fontSize(FontSize.SMALL)
-                .fontColor(ThemeColors.TEXT_HINT_LIGHT)
-                .margin({ left: 8 })
-            }
-            .width('100%')
-            .height(50)
-            .justifyContent(FlexAlign.Center)
-            .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
-            .margin({ top: 8 })
-          }
         }
         .layoutWeight(1)
         .width('100%')

@@ -1,4 +1,5 @@
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
+import { AppConstants } from '../../common/constants/AppConstants';
 import { Article, Attachment } from '../../model/entity/Article';
 import { Topic } from '../../model/entity/Topic';
 import { User } from '../../model/entity/User';
@@ -10,10 +11,12 @@ import { userManager } from '../../common/manager/UserManager';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 import connection from '@ohos.net.connection';
+import common from '@ohos.app.ability.common';
 
 class ContentSegment {
   type: string = 'text';
   text: string = '';
+  linkUrl: string = '';
   imageUrl: string = '';
   originalImageUrl: string = '';
   isQuote: boolean = false;
@@ -32,6 +35,34 @@ class ContentSegment {
     seg.imageUrl = previewUrl;
     seg.originalImageUrl = originalUrl !== '' ? originalUrl : previewUrl;
     return seg;
+  }
+
+  static makeLink(text: string, url: string, isQuote: boolean = false): ContentSegment {
+    const seg = new ContentSegment();
+    seg.type = 'link';
+    seg.text = text;
+    seg.linkUrl = url;
+    seg.isQuote = isQuote;
+    return seg;
+  }
+}
+
+class ContentBlock {
+  type: string = 'inline';
+  segments: ContentSegment[] = [];
+
+  static makeInline(segments: ContentSegment[]): ContentBlock {
+    const block = new ContentBlock();
+    block.type = 'inline';
+    block.segments = segments;
+    return block;
+  }
+
+  static makeImage(segment: ContentSegment): ContentBlock {
+    const block = new ContentBlock();
+    block.type = 'image';
+    block.segments = [segment];
+    return block;
   }
 }
 
@@ -491,10 +522,12 @@ struct ArticleListPage {
 
     // 先处理 HTML 换行
     processed = processed.replace(/<br\s*\/?>/g, '\n');
+    processed = processed.replace(/<a\b[^>]*href=(['"])(.*?)\1[^>]*>(.*?)<\/a>/gi, '[url=$2]$3[/url]');
     // 去掉 HTML 标签（img 除外）
     processed = processed.replace(/<(?!\/?img)[^>]+>/g, '');
     // HTML 实体
     processed = this.decodeHtmlEntities(processed);
+    const lowerProcessed = processed.toLowerCase();
 
     // 收集附件图片 URL 映射（按 attachs key / aid）
     const thumbToOriginalMap: Map<string, string> = new Map();
@@ -516,19 +549,23 @@ struct ArticleListPage {
     const flushText = (): void => {
       const cleaned = this.cleanBBCode(textBuf);
       if (cleaned.trim()) {
-        segments.push(ContentSegment.makeText(cleaned.trim()));
+        segments.push(ContentSegment.makeText(cleaned));
       }
       textBuf = '';
     };
 
     while (pos < processed.length) {
       // 查找下一个 [img] 标签
-      const imgStart = processed.indexOf('[img]', pos);
-      const imgStart2 = processed.indexOf('[img=', pos);
+      const imgStart = lowerProcessed.indexOf('[img]', pos);
+      const imgStart2 = lowerProcessed.indexOf('[img=', pos);
+      const urlStart = lowerProcessed.indexOf('[url]', pos);
+      const urlStart2 = lowerProcessed.indexOf('[url=', pos);
 
       // 找最近的图片标签位置
       let nextImgPos = -1;
       let isImgWithParams = false;
+      let nextUrlPos = -1;
+      let isUrlWithParams = false;
 
       if (imgStart >= 0 && imgStart2 >= 0) {
         if (imgStart <= imgStart2) { nextImgPos = imgStart; isImgWithParams = false; }
@@ -536,41 +573,98 @@ struct ArticleListPage {
       } else if (imgStart >= 0) { nextImgPos = imgStart; isImgWithParams = false; }
       else if (imgStart2 >= 0) { nextImgPos = imgStart2; isImgWithParams = true; }
 
-      if (nextImgPos < 0) {
+      if (urlStart >= 0 && urlStart2 >= 0) {
+        if (urlStart <= urlStart2) { nextUrlPos = urlStart; isUrlWithParams = false; }
+        else { nextUrlPos = urlStart2; isUrlWithParams = true; }
+      } else if (urlStart >= 0) { nextUrlPos = urlStart; isUrlWithParams = false; }
+      else if (urlStart2 >= 0) { nextUrlPos = urlStart2; isUrlWithParams = true; }
+
+      let nextTagPos = -1;
+      let nextTagType = '';
+      if (nextImgPos >= 0 && nextUrlPos >= 0) {
+        if (nextImgPos <= nextUrlPos) {
+          nextTagPos = nextImgPos;
+          nextTagType = 'image';
+        } else {
+          nextTagPos = nextUrlPos;
+          nextTagType = 'link';
+        }
+      } else if (nextImgPos >= 0) {
+        nextTagPos = nextImgPos;
+        nextTagType = 'image';
+      } else if (nextUrlPos >= 0) {
+        nextTagPos = nextUrlPos;
+        nextTagType = 'link';
+      }
+
+      if (nextTagPos < 0) {
         textBuf += processed.substring(pos);
         break;
       }
 
-      // 将图片之前的文字加入
-      textBuf += processed.substring(pos, nextImgPos);
+      textBuf += processed.substring(pos, nextTagPos);
 
-      // 解析图片标签
-      const imgEndTag = '[/img]';
-      const imgEndPos = processed.indexOf(imgEndTag, nextImgPos);
-      if (imgEndPos < 0) {
-        textBuf += processed.substring(nextImgPos);
+      if (nextTagType === 'image') {
+        const imgEndTag = '[/img]';
+        const imgEndPos = lowerProcessed.indexOf(imgEndTag, nextTagPos);
+        if (imgEndPos < 0) {
+          textBuf += processed.substring(nextTagPos);
+          break;
+        }
+
+        let imgUrl = '';
+        if (isImgWithParams) {
+          const closeBracket = processed.indexOf(']', nextTagPos);
+          if (closeBracket >= 0 && closeBracket < imgEndPos) {
+            imgUrl = processed.substring(closeBracket + 1, imgEndPos).trim();
+          }
+        } else {
+          imgUrl = processed.substring(nextTagPos + 5, imgEndPos).trim();
+        }
+
+        if (imgUrl) {
+          flushText();
+          const normalizedUrl = this.apiHelper.normalizeImageUrl(imgUrl);
+          const originalUrl = thumbToOriginalMap.get(normalizedUrl) || normalizedUrl;
+          segments.push(ContentSegment.makeImage(normalizedUrl, originalUrl));
+        }
+
+        pos = imgEndPos + imgEndTag.length;
+        continue;
+      }
+
+      const closeBracket = processed.indexOf(']', nextTagPos);
+      if (closeBracket < 0) {
+        textBuf += processed.substring(nextTagPos);
         break;
       }
 
-      // 提取图片 URL
-      let imgUrl = '';
-      if (isImgWithParams) {
-        const closeBracket = processed.indexOf(']', nextImgPos);
-        if (closeBracket >= 0 && closeBracket < imgEndPos) {
-          imgUrl = processed.substring(closeBracket + 1, imgEndPos).trim();
-        }
+      const urlEndTag = '[/url]';
+      const urlEndPos = lowerProcessed.indexOf(urlEndTag, closeBracket);
+      if (urlEndPos < 0) {
+        textBuf += processed.substring(nextTagPos);
+        break;
+      }
+
+      let linkUrl = '';
+      if (isUrlWithParams) {
+        linkUrl = processed.substring(nextTagPos + 5, closeBracket).trim();
       } else {
-        imgUrl = processed.substring(nextImgPos + 5, imgEndPos).trim();
+        linkUrl = processed.substring(closeBracket + 1, urlEndPos).trim();
       }
+      const rawLinkText = processed.substring(closeBracket + 1, urlEndPos);
+      const cleanedLinkText = this.cleanBBCode(rawLinkText);
+      const normalizedLinkUrl = this.normalizeLinkUrl(linkUrl);
+      const displayText = cleanedLinkText.trim() !== '' ? cleanedLinkText : normalizedLinkUrl;
 
-      if (imgUrl) {
+      if (normalizedLinkUrl !== '' && displayText.trim() !== '') {
         flushText();
-        const normalizedUrl = this.apiHelper.normalizeImageUrl(imgUrl);
-        const originalUrl = thumbToOriginalMap.get(normalizedUrl) || normalizedUrl;
-        segments.push(ContentSegment.makeImage(normalizedUrl, originalUrl));
+        segments.push(ContentSegment.makeLink(displayText, normalizedLinkUrl));
+      } else {
+        textBuf += rawLinkText;
       }
 
-      pos = imgEndPos + imgEndTag.length;
+      pos = urlEndPos + urlEndTag.length;
     }
 
     flushText();
@@ -599,6 +693,31 @@ struct ArticleListPage {
     return segments;
   }
 
+  buildContentBlocks(segments: ContentSegment[]): ContentBlock[] {
+    const blocks: ContentBlock[] = [];
+    let inlineSegments: ContentSegment[] = [];
+
+    const flushInline = (): void => {
+      if (inlineSegments.length > 0) {
+        blocks.push(ContentBlock.makeInline(inlineSegments));
+        inlineSegments = [];
+      }
+    };
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      if (segment.type === 'image') {
+        flushInline();
+        blocks.push(ContentBlock.makeImage(segment));
+      } else {
+        inlineSegments.push(segment);
+      }
+    }
+
+    flushInline();
+    return blocks;
+  }
+
   cleanBBCode(text: string): string {
     let result = text;
     result = result.replace(/\[quote\]/g, '\u300C');
@@ -609,7 +728,7 @@ struct ArticleListPage {
     result = result.replace(/\[\/i\]/g, '');
     result = result.replace(/\[u\]/g, '');
     result = result.replace(/\[\/u\]/g, '');
-    result = result.replace(/\[url\][^\[]*\[\/url\]/g, '[\u94FE\u63A5]');
+    result = result.replace(/\[url\]([^\[]*)\[\/url\]/g, '$1');
     result = result.replace(/\[url=[^\]]*\]([^\[]*)\[\/url\]/g, '$1');
     result = result.replace(/\[collapse=[^\]]*\]/g, '');
     result = result.replace(/\[\/collapse\]/g, '');
@@ -634,6 +753,33 @@ struct ArticleListPage {
     result = result.replace(/\[\/?[a-zA-Z]+[^\]]*\]/g, '');
     result = result.replace(/\n{3,}/g, '\n\n');
     return this.decodeHtmlEntities(result);
+  }
+
+  private normalizeLinkUrl(url: string): string {
+    const cleaned = this.decodeHtmlEntities(url).trim();
+    if (!cleaned) {
+      return '';
+    }
+
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned)) {
+      return cleaned;
+    }
+    if (cleaned.indexOf('//') === 0) {
+      return 'https:' + cleaned;
+    }
+    if (cleaned.indexOf('/') === 0) {
+      return AppConstants.NGA_BASE_URL + cleaned;
+    }
+    if (cleaned.indexOf('./') === 0) {
+      return AppConstants.NGA_BASE_URL + '/' + cleaned.substring(2);
+    }
+    if (/^(read|thread|post|nuke)\.php/i.test(cleaned) || cleaned.indexOf('.php?') >= 0 || cleaned.indexOf('.php#') >= 0) {
+      return AppConstants.NGA_BASE_URL + '/' + cleaned;
+    }
+    if (/^[^\/\s]+\.[^\s]+/.test(cleaned)) {
+      return 'https://' + cleaned;
+    }
+    return '';
   }
 
   private decodeHtmlEntities(text: string): string {
@@ -1200,6 +1346,14 @@ struct ArticleListPage {
     return urls;
   }
 
+  private getArticleBlocks(article: Article): ContentBlock[] {
+    return this.buildContentBlocks(this.parseContentSegments(article.content, article.attachments));
+  }
+
+  private getArticleImageUrls(article: Article): string[] {
+    return this.collectImageUrls(this.parseContentSegments(article.content, article.attachments));
+  }
+
   openImageViewer(imageUrls: string[], clickedUrl: string) {
     let idx = 0;
     for (let i = 0; i < imageUrls.length; i++) {
@@ -1225,13 +1379,34 @@ struct ArticleListPage {
     return seg.imageUrl;
   }
 
+  async openLink(url: string) {
+    const normalizedUrl = this.normalizeLinkUrl(url);
+    if (normalizedUrl === '') {
+      promptAction.showToast({ message: '链接地址无效', duration: 1500 });
+      return;
+    }
+
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      await context.startAbility({
+        action: 'ohos.want.action.viewData',
+        entities: ['entity.system.browsable'],
+        uri: normalizedUrl,
+        type: 'text/html'
+      });
+    } catch (err) {
+      console.error('Open link failed:', JSON.stringify(err));
+      promptAction.showToast({ message: '打开链接失败', duration: 1500 });
+    }
+  }
+
   @Builder
   RichContent(article: Article) {
     Column() {
-      ForEach(this.parseContentSegments(article.content, article.attachments),
-        (seg: ContentSegment, segIndex: number) => {
-          if (seg.type === 'image') {
-            Image(this.inlineImageUrl(seg))
+      ForEach(this.getArticleBlocks(article),
+        (block: ContentBlock, blockIndex: number) => {
+          if (block.type === 'image') {
+            Image(this.inlineImageUrl(block.segments[0]))
               .width('100%')
               .objectFit(ImageFit.Contain)
               .borderRadius(BorderRadius.NORMAL)
@@ -1239,19 +1414,30 @@ struct ArticleListPage {
               .constraintSize(this.useOriginalImagesInPost ? {} : { maxHeight: 400 })
               .margin({ top: 8, bottom: 4 })
               .onClick(() => {
-                const segments = this.parseContentSegments(article.content, article.attachments);
-                const allImgUrls = this.collectImageUrls(segments);
-                this.openImageViewer(allImgUrls, seg.originalImageUrl);
+                this.openImageViewer(this.getArticleImageUrls(article), block.segments[0].originalImageUrl);
               })
           } else {
-            Text(seg.text)
+            Text() {
+              ForEach(block.segments, (seg: ContentSegment, segIndex: number) => {
+                if (seg.type === 'link') {
+                  Span(seg.text)
+                    .fontColor(ThemeColors.PRIMARY)
+                    .decoration({ type: TextDecorationType.Underline, color: ThemeColors.PRIMARY })
+                    .onClick(() => {
+                      this.openLink(seg.linkUrl);
+                    })
+                } else {
+                  Span(seg.text)
+                    .fontColor(seg.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
+                }
+              }, (seg: ContentSegment, segIndex: number) => seg.type + '_' + blockIndex + '_' + segIndex)
+            }
               .fontSize(FontSize.ARTICLE_NORMAL)
-              .fontColor(seg.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
               .lineHeight(FontSize.ARTICLE_NORMAL + 6)
               .width('100%')
           }
         },
-        (seg: ContentSegment, segIndex: number) => seg.type + '_' + segIndex
+        (block: ContentBlock, blockIndex: number) => block.type + '_' + blockIndex
       )
     }
     .width('100%')

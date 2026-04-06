@@ -5,12 +5,12 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "/Users/richie/.ohos/config/default_harmony-open-nga_jv9bJvyf7w6bAqVsIYt6TSZmA50hgA6Yk2Gaw8HGfBQ=.cer",
+          "certpath": "./.sign/default.cer",
           "keyAlias": "debugKey",
           "keyPassword": "0000001B592EA167342CC68911BE6412C8DDB7D88F9074E9DD0F12CE57212CB7467F5707E4520A2258DA85",
-          "profile": "/Users/richie/.ohos/config/default_harmony-open-nga_jv9bJvyf7w6bAqVsIYt6TSZmA50hgA6Yk2Gaw8HGfBQ=.p7b",
+          "profile": "./.sign/default.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "/Users/richie/.ohos/config/default_harmony-open-nga_jv9bJvyf7w6bAqVsIYt6TSZmA50hgA6Yk2Gaw8HGfBQ=.p12",
+          "storeFile": "./.sign/default.p12",
           "storePassword": "0000001B2CC355F70E57A411637AC02AFAD2E648856E4FEF9CD456D3449F889FE46E4F1CC59178820BD591"
         }
       }
