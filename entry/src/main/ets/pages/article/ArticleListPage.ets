@@ -17,6 +17,7 @@ class ContentSegment {
   type: string = 'text';
   text: string = '';
   linkUrl: string = '';
+  userUid: string = '';
   imageUrl: string = '';
   originalImageUrl: string = '';
   isQuote: boolean = false;
@@ -45,23 +46,35 @@ class ContentSegment {
     seg.isQuote = isQuote;
     return seg;
   }
+
+  static makeUser(text: string, uid: string, isQuote: boolean = false): ContentSegment {
+    const seg = new ContentSegment();
+    seg.type = 'user';
+    seg.text = text;
+    seg.userUid = uid;
+    seg.isQuote = isQuote;
+    return seg;
+  }
 }
 
 class ContentBlock {
   type: string = 'inline';
   segments: ContentSegment[] = [];
+  isQuote: boolean = false;
 
-  static makeInline(segments: ContentSegment[]): ContentBlock {
+  static makeInline(segments: ContentSegment[], isQuote: boolean = false): ContentBlock {
     const block = new ContentBlock();
     block.type = 'inline';
     block.segments = segments;
+    block.isQuote = isQuote;
     return block;
   }
 
-  static makeImage(segment: ContentSegment): ContentBlock {
+  static makeImage(segment: ContentSegment, isQuote: boolean = false): ContentBlock {
     const block = new ContentBlock();
     block.type = 'image';
     block.segments = [segment];
+    block.isQuote = isQuote;
     return block;
   }
 }
@@ -514,7 +527,42 @@ struct ArticleListPage {
     }
   }
 
-  parseContentSegments(content: string, attachments: Attachment[]): ContentSegment[] {
+  private findMatchingQuoteEnd(lowerContent: string, quoteStart: number): number {
+    const openTagEnd = lowerContent.indexOf(']', quoteStart);
+    if (openTagEnd < 0) {
+      return -1;
+    }
+
+    let depth = 1;
+    let searchPos = openTagEnd + 1;
+    while (searchPos < lowerContent.length) {
+      const nextQuoteOpen = lowerContent.indexOf('[quote', searchPos);
+      const nextQuoteClose = lowerContent.indexOf('[/quote]', searchPos);
+      if (nextQuoteClose < 0) {
+        return -1;
+      }
+
+      if (nextQuoteOpen >= 0 && nextQuoteOpen < nextQuoteClose) {
+        const nestedOpenEnd = lowerContent.indexOf(']', nextQuoteOpen);
+        if (nestedOpenEnd < 0) {
+          return -1;
+        }
+        depth++;
+        searchPos = nestedOpenEnd + 1;
+        continue;
+      }
+
+      depth--;
+      if (depth === 0) {
+        return nextQuoteClose;
+      }
+      searchPos = nextQuoteClose + 8;
+    }
+
+    return -1;
+  }
+
+  parseContentSegments(content: string, attachments: Attachment[], appendDetachedAttachments: boolean = true): ContentSegment[] {
     if (!content) return [];
 
     const segments: ContentSegment[] = [];
@@ -560,12 +608,16 @@ struct ArticleListPage {
       const imgStart2 = lowerProcessed.indexOf('[img=', pos);
       const urlStart = lowerProcessed.indexOf('[url]', pos);
       const urlStart2 = lowerProcessed.indexOf('[url=', pos);
+      const uidStart = lowerProcessed.indexOf('[uid=', pos);
+      const quoteStart = lowerProcessed.indexOf('[quote', pos);
 
       // 找最近的图片标签位置
       let nextImgPos = -1;
       let isImgWithParams = false;
       let nextUrlPos = -1;
       let isUrlWithParams = false;
+      let nextUidPos = -1;
+      let nextQuotePos = -1;
 
       if (imgStart >= 0 && imgStart2 >= 0) {
         if (imgStart <= imgStart2) { nextImgPos = imgStart; isImgWithParams = false; }
@@ -579,22 +631,31 @@ struct ArticleListPage {
       } else if (urlStart >= 0) { nextUrlPos = urlStart; isUrlWithParams = false; }
       else if (urlStart2 >= 0) { nextUrlPos = urlStart2; isUrlWithParams = true; }
 
+      if (uidStart >= 0) {
+        nextUidPos = uidStart;
+      }
+
+      if (quoteStart >= 0) {
+        nextQuotePos = quoteStart;
+      }
+
       let nextTagPos = -1;
       let nextTagType = '';
-      if (nextImgPos >= 0 && nextUrlPos >= 0) {
-        if (nextImgPos <= nextUrlPos) {
-          nextTagPos = nextImgPos;
-          nextTagType = 'image';
-        } else {
-          nextTagPos = nextUrlPos;
-          nextTagType = 'link';
-        }
-      } else if (nextImgPos >= 0) {
+      if (nextImgPos >= 0) {
         nextTagPos = nextImgPos;
         nextTagType = 'image';
-      } else if (nextUrlPos >= 0) {
+      }
+      if (nextUrlPos >= 0 && (nextTagPos < 0 || nextUrlPos < nextTagPos)) {
         nextTagPos = nextUrlPos;
         nextTagType = 'link';
+      }
+      if (nextUidPos >= 0 && (nextTagPos < 0 || nextUidPos < nextTagPos)) {
+        nextTagPos = nextUidPos;
+        nextTagType = 'user';
+      }
+      if (nextQuotePos >= 0 && (nextTagPos < 0 || nextQuotePos < nextTagPos)) {
+        nextTagPos = nextQuotePos;
+        nextTagType = 'quote';
       }
 
       if (nextTagPos < 0) {
@@ -603,6 +664,26 @@ struct ArticleListPage {
       }
 
       textBuf += processed.substring(pos, nextTagPos);
+
+      if (nextTagType === 'quote') {
+        const quoteOpenEnd = processed.indexOf(']', nextTagPos);
+        const quoteEndPos = this.findMatchingQuoteEnd(lowerProcessed, nextTagPos);
+        if (quoteOpenEnd < 0 || quoteEndPos < 0) {
+          textBuf += processed.substring(nextTagPos);
+          break;
+        }
+
+        flushText();
+        const quoteInner = processed.substring(quoteOpenEnd + 1, quoteEndPos);
+        const quoteSegments = this.parseContentSegments(quoteInner, attachments, false);
+        for (let i = 0; i < quoteSegments.length; i++) {
+          quoteSegments[i].isQuote = true;
+          segments.push(quoteSegments[i]);
+        }
+
+        pos = quoteEndPos + 8;
+        continue;
+      }
 
       if (nextTagType === 'image') {
         const imgEndTag = '[/img]';
@@ -639,6 +720,28 @@ struct ArticleListPage {
         break;
       }
 
+      if (nextTagType === 'user') {
+        const uidEndTag = '[/uid]';
+        const uidEndPos = lowerProcessed.indexOf(uidEndTag, closeBracket);
+        if (uidEndPos < 0) {
+          textBuf += processed.substring(nextTagPos);
+          break;
+        }
+
+        const uidValue = processed.substring(nextTagPos + 5, closeBracket).trim();
+        const rawUserText = processed.substring(closeBracket + 1, uidEndPos);
+        const cleanedUserText = this.cleanBBCode(rawUserText).trim();
+        if (/^\d+$/.test(uidValue) && cleanedUserText !== '') {
+          flushText();
+          segments.push(ContentSegment.makeUser(cleanedUserText, uidValue));
+        } else {
+          textBuf += rawUserText;
+        }
+
+        pos = uidEndPos + uidEndTag.length;
+        continue;
+      }
+
       const urlEndTag = '[/url]';
       const urlEndPos = lowerProcessed.indexOf(urlEndTag, closeBracket);
       if (urlEndPos < 0) {
@@ -670,7 +773,7 @@ struct ArticleListPage {
     flushText();
 
     // 如果内容中没有 [img] 但有附件图片，在末尾追加
-    if (attachments.length > 0) {
+    if (appendDetachedAttachments && attachments.length > 0) {
       let hasImgInContent = false;
       for (let i = 0; i < segments.length; i++) {
         if (segments[i].type === 'image') {
@@ -699,7 +802,7 @@ struct ArticleListPage {
 
     const flushInline = (): void => {
       if (inlineSegments.length > 0) {
-        blocks.push(ContentBlock.makeInline(inlineSegments));
+        blocks.push(ContentBlock.makeInline(inlineSegments, inlineSegments[0].isQuote));
         inlineSegments = [];
       }
     };
@@ -708,8 +811,11 @@ struct ArticleListPage {
       const segment = segments[i];
       if (segment.type === 'image') {
         flushInline();
-        blocks.push(ContentBlock.makeImage(segment));
+        blocks.push(ContentBlock.makeImage(segment, segment.isQuote));
       } else {
+        if (inlineSegments.length > 0 && inlineSegments[0].isQuote !== segment.isQuote) {
+          flushInline();
+        }
         inlineSegments.push(segment);
       }
     }
@@ -1417,11 +1523,85 @@ struct ArticleListPage {
   }
 
   @Builder
+  private InlineTextBlock(block: ContentBlock, keyPrefix: string) {
+    Text() {
+      ForEach(block.segments, (seg: ContentSegment, segIndex: number) => {
+        if (seg.type === 'link') {
+          Span(seg.text)
+            .fontColor(block.isQuote ? ThemeColors.PRIMARY_DARK : ThemeColors.PRIMARY)
+            .decoration({
+              type: TextDecorationType.Underline,
+              color: block.isQuote ? ThemeColors.PRIMARY_DARK : ThemeColors.PRIMARY
+            })
+            .onClick(() => {
+              this.openLink(seg.linkUrl);
+            })
+        } else if (seg.type === 'user') {
+          Span(seg.text)
+            .fontColor(block.isQuote ? ThemeColors.PRIMARY_DARK : ThemeColors.PRIMARY)
+            .fontWeight(FontWeight.Medium)
+            .decoration({
+              type: TextDecorationType.Underline,
+              color: block.isQuote ? ThemeColors.PRIMARY_DARK : ThemeColors.PRIMARY
+            })
+            .onClick(() => {
+              this.goToUserProfile(seg.userUid, seg.text);
+            })
+        } else {
+          Span(seg.text)
+            .fontColor(block.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
+        }
+      }, (seg: ContentSegment, segIndex: number) => keyPrefix + '_' + seg.type + '_' + segIndex)
+    }
+      .fontSize(FontSize.ARTICLE_NORMAL)
+      .lineHeight(FontSize.ARTICLE_NORMAL + 6)
+      .width('100%')
+      .copyOption(CopyOptions.LocalDevice)
+  }
+
+  @Builder
+  private QuoteBlock(article: Article, block: ContentBlock, blockIndex: number) {
+    Column() {
+      Text('引用内容')
+        .fontSize(FontSize.EXTRA_SMALL)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeColors.PRIMARY)
+        .backgroundColor(ThemeColors.PRIMARY_LIGHT)
+        .borderRadius(BorderRadius.SMALL)
+        .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+        .margin({ bottom: 10 })
+
+      if (block.type === 'image') {
+        Image(this.inlineImageUrl(block.segments[0]))
+          .width('100%')
+          .objectFit(ImageFit.Contain)
+          .borderRadius(BorderRadius.NORMAL)
+          .backgroundColor(ThemeColors.SURFACE_LIGHT)
+          .constraintSize(this.useOriginalImagesInPost ? {} : { maxHeight: 320 })
+          .onClick(() => {
+            this.openImageViewer(this.getArticleImageUrls(article), block.segments[0].originalImageUrl);
+          })
+      } else {
+        this.InlineTextBlock(block, 'quote_' + blockIndex)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor('#FFF8F9')
+    .border({ width: 1, color: '#FFD9E0' })
+    .borderRadius(BorderRadius.MEDIUM)
+    .margin({ top: 6, bottom: 6 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
   RichContent(article: Article) {
     Column() {
       ForEach(this.getArticleBlocks(article),
         (block: ContentBlock, blockIndex: number) => {
-          if (block.type === 'image') {
+          if (block.isQuote) {
+            this.QuoteBlock(article, block, blockIndex)
+          } else if (block.type === 'image') {
             Image(this.inlineImageUrl(block.segments[0]))
               .width('100%')
               .objectFit(ImageFit.Contain)
@@ -1433,24 +1613,7 @@ struct ArticleListPage {
                 this.openImageViewer(this.getArticleImageUrls(article), block.segments[0].originalImageUrl);
               })
           } else {
-            Text() {
-              ForEach(block.segments, (seg: ContentSegment, segIndex: number) => {
-                if (seg.type === 'link') {
-                  Span(seg.text)
-                    .fontColor(ThemeColors.PRIMARY)
-                    .decoration({ type: TextDecorationType.Underline, color: ThemeColors.PRIMARY })
-                    .onClick(() => {
-                      this.openLink(seg.linkUrl);
-                    })
-                } else {
-                  Span(seg.text)
-                    .fontColor(seg.isQuote ? ThemeColors.TEXT_SECONDARY_LIGHT : ThemeColors.TEXT_PRIMARY_LIGHT)
-                }
-              }, (seg: ContentSegment, segIndex: number) => seg.type + '_' + blockIndex + '_' + segIndex)
-            }
-              .fontSize(FontSize.ARTICLE_NORMAL)
-              .lineHeight(FontSize.ARTICLE_NORMAL + 6)
-              .width('100%')
+            this.InlineTextBlock(block, 'body_' + blockIndex)
           }
         },
         (block: ContentBlock, blockIndex: number) => block.type + '_' + blockIndex
