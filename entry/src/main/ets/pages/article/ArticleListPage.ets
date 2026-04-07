@@ -195,7 +195,8 @@ struct ArticleListPage {
         continue;
       }
       seen.add(uid);
-      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork);
+      const knownAvatarUrl = articlesToWarm[i].author.avatar != null ? String(articlesToWarm[i].author.avatar) : '';
+      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork, false, knownAvatarUrl, false);
       if (avatarUrl !== '') {
         this.updateAvatarUrl(uid, avatarUrl);
       }

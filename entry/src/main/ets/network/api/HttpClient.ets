@@ -75,12 +75,42 @@ export class HttpClient {
     return this.cookie;
   }
 
-  async get(url: string): Promise<HttpResponse<string>> {
-    return this.request(url, http.RequestMethod.GET, '');
+  private buildHeaders(includeContentType: boolean, extraHeaders?: Record<string, string>): Record<string, string> {
+    const headerMap: Record<string, string> = {
+      'User-Agent': HttpClient.UA,
+      'Accept': '*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'X-User-Agent': 'Nga_Official'
+    };
+
+    if (this.cookie !== '') {
+      headerMap['Cookie'] = this.cookie;
+    }
+
+    if (includeContentType) {
+      headerMap['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
+
+    if (extraHeaders != null) {
+      const keys = Object.keys(extraHeaders);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const value = extraHeaders[key];
+        if (value != null && value !== '') {
+          headerMap[key] = value;
+        }
+      }
+    }
+
+    return headerMap;
   }
 
-  async post(url: string, body: string): Promise<HttpResponse<string>> {
-    return this.request(url, http.RequestMethod.POST, body);
+  async get(url: string, extraHeaders?: Record<string, string>): Promise<HttpResponse<string>> {
+    return this.request(url, http.RequestMethod.GET, '', extraHeaders);
+  }
+
+  async post(url: string, body: string, extraHeaders?: Record<string, string>): Promise<HttpResponse<string>> {
+    return this.request(url, http.RequestMethod.POST, body, extraHeaders);
   }
 
   /**
@@ -137,7 +167,12 @@ export class HttpClient {
     }
   }
 
-  async request(url: string, method: http.RequestMethod, body: string): Promise<HttpResponse<string>> {
+  async request(
+    url: string,
+    method: http.RequestMethod,
+    body: string,
+    extraHeaders?: Record<string, string>
+  ): Promise<HttpResponse<string>> {
     const httpRequest = http.createHttp();
     const response = new HttpResponse<string>();
 
@@ -147,17 +182,7 @@ export class HttpClient {
         fullUrl = this.baseUrl + url;
       }
 
-      const headerMap: Record<string, string> = {
-        'User-Agent': HttpClient.UA,
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-        'X-User-Agent': 'Nga_Official',
-        'Cookie': this.cookie
-      };
-
-      if (method === http.RequestMethod.POST) {
-        headerMap['Content-Type'] = 'application/x-www-form-urlencoded';
-      }
+      const headerMap = this.buildHeaders(method === http.RequestMethod.POST, extraHeaders);
 
       const options: http.HttpRequestOptions = {
         method: method,
@@ -213,7 +238,7 @@ export class HttpClient {
   /**
    * 以 GBK 编码获取响应（用于 nuke.php 等始终返回 GBK 的 API）
    */
-  async getGbk(url: string): Promise<HttpResponse<string>> {
+  async getGbk(url: string, extraHeaders?: Record<string, string>): Promise<HttpResponse<string>> {
     const httpRequest = http.createHttp();
     const response = new HttpResponse<string>();
 
@@ -226,13 +251,7 @@ export class HttpClient {
       const options: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        header: {
-          'User-Agent': HttpClient.UA,
-          'Accept': '*/*',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-          'X-User-Agent': 'Nga_Official',
-          'Cookie': this.cookie
-        } as Record<string, string>,
+        header: this.buildHeaders(false, extraHeaders),
         connectTimeout: 30000,
         readTimeout: 30000
       };
@@ -241,14 +260,22 @@ export class HttpClient {
       response.code = httpResponse.responseCode;
 
       if (httpResponse.result instanceof ArrayBuffer) {
-        const decoded = this.decodeGbFamilyBuffer(httpResponse.result);
-        response.message = 'Success';
-        response.raw = decoded;
-        response.data = decoded;
+        if (httpResponse.result.byteLength === 0) {
+          response.message = '服务器返回空响应';
+        } else {
+          const decoded = this.decodeGbFamilyBuffer(httpResponse.result);
+          response.message = 'Success';
+          response.raw = decoded;
+          response.data = decoded;
+        }
       } else if (typeof httpResponse.result === 'string') {
-        response.message = 'Success';
-        response.raw = httpResponse.result;
-        response.data = httpResponse.result;
+        if (httpResponse.result === '') {
+          response.message = '服务器返回空响应';
+        } else {
+          response.message = 'Success';
+          response.raw = httpResponse.result;
+          response.data = httpResponse.result;
+        }
       } else {
         response.message = '服务器返回空响应';
       }
@@ -262,7 +289,7 @@ export class HttpClient {
     return response;
   }
 
-  async getBytes(url: string): Promise<ArrayBuffer | null> {
+  async getBytes(url: string, extraHeaders?: Record<string, string>): Promise<ArrayBuffer | null> {
     const httpRequest = http.createHttp();
 
     try {
@@ -274,13 +301,7 @@ export class HttpClient {
       const options: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        header: {
-          'User-Agent': HttpClient.UA,
-          'Accept': '*/*',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-          'X-User-Agent': 'Nga_Official',
-          'Cookie': this.cookie
-        } as Record<string, string>,
+        header: this.buildHeaders(false, extraHeaders),
         connectTimeout: 30000,
         readTimeout: 30000
       };

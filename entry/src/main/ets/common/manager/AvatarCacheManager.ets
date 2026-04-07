@@ -8,9 +8,12 @@ import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 export class AvatarCacheManager {
   private static instance: AvatarCacheManager;
   private readonly CACHE_KEY: string = 'user_avatar_cache_map_v1';
+  private readonly REMOTE_URL_CACHE_KEY: string = 'user_avatar_remote_url_map_v1';
   private readonly CACHE_DIR_NAME: string = 'avatar-cache';
   private cacheMap: Record<string, string> = {};
   private cacheLoaded: boolean = false;
+  private remoteUrlMap: Record<string, string> = {};
+  private remoteUrlLoaded: boolean = false;
   private inFlight: Map<string, Promise<string>> = new Map();
 
   private constructor() {}
@@ -110,6 +113,53 @@ export class AvatarCacheManager {
     } catch (error) {
       console.error('Persist avatar cache map failed:', error);
     }
+  }
+
+  private async ensureRemoteUrlMapLoaded(): Promise<void> {
+    if (this.remoteUrlLoaded) {
+      return;
+    }
+
+    try {
+      const stored = await PreferencesManager.getInstance().getString(this.REMOTE_URL_CACHE_KEY, '');
+      if (stored !== '') {
+        this.remoteUrlMap = JSON.parse(stored) as Record<string, string>;
+      }
+    } catch (error) {
+      console.error('Load avatar remote url map failed:', error);
+      this.remoteUrlMap = {};
+    }
+    this.remoteUrlLoaded = true;
+  }
+
+  private async persistRemoteUrlMap(): Promise<void> {
+    try {
+      await PreferencesManager.getInstance().putString(this.REMOTE_URL_CACHE_KEY, JSON.stringify(this.remoteUrlMap));
+    } catch (error) {
+      console.error('Persist avatar remote url map failed:', error);
+    }
+  }
+
+  private async getRememberedAvatarUrl(uid: string): Promise<string> {
+    await this.ensureRemoteUrlMapLoaded();
+    const remembered = this.remoteUrlMap[uid];
+    return remembered != null ? this.normalizeAvatarUrl(remembered) : '';
+  }
+
+  private async rememberAvatarUrl(uid: string, avatarUrl: string): Promise<void> {
+    const normalizedUid = this.normalizeUid(uid);
+    const normalizedUrl = this.normalizeAvatarUrl(avatarUrl);
+    if (normalizedUid === '' || normalizedUrl === '') {
+      return;
+    }
+
+    await this.ensureRemoteUrlMapLoaded();
+    if (this.remoteUrlMap[normalizedUid] === normalizedUrl) {
+      return;
+    }
+
+    this.remoteUrlMap[normalizedUid] = normalizedUrl;
+    await this.persistRemoteUrlMap();
   }
 
   private removeCachedAvatar(uid: string): void {
@@ -239,12 +289,22 @@ export class AvatarCacheManager {
   private async resolveRemoteAvatarUrl(uid: string, knownAvatarUrl: string): Promise<string> {
     const normalizedKnown = this.normalizeAvatarUrl(knownAvatarUrl);
     if (normalizedKnown !== '') {
+      await this.rememberAvatarUrl(uid, normalizedKnown);
       return normalizedKnown;
+    }
+
+    const remembered = await this.getRememberedAvatarUrl(uid);
+    if (remembered !== '') {
+      return remembered;
     }
 
     const profileResponse = await ngaApi.getUserProfile(uid);
     if (profileResponse.code === 200 && profileResponse.data != null) {
-      return this.normalizeAvatarUrl(this.pickAvatarUrlFromProfile(profileResponse.data));
+      const profileAvatarUrl = this.normalizeAvatarUrl(this.pickAvatarUrlFromProfile(profileResponse.data));
+      if (profileAvatarUrl !== '') {
+        await this.rememberAvatarUrl(uid, profileAvatarUrl);
+      }
+      return profileAvatarUrl;
     }
 
     return '';
@@ -258,12 +318,16 @@ export class AvatarCacheManager {
     lookupProfileWhenUrlMissing: boolean
   ): Promise<string> {
     let remoteAvatarUrl = this.normalizeAvatarUrl(knownAvatarUrl);
+    if (remoteAvatarUrl === '') {
+      remoteAvatarUrl = await this.getRememberedAvatarUrl(uid);
+    }
     if (remoteAvatarUrl === '' && lookupProfileWhenUrlMissing) {
       remoteAvatarUrl = await this.resolveRemoteAvatarUrl(uid, '');
     }
     if (remoteAvatarUrl === '') {
       return fallbackUri;
     }
+    await this.rememberAvatarUrl(uid, remoteAvatarUrl);
 
     const bytes = await httpClient.getBytes(remoteAvatarUrl);
     if (bytes == null) {

@@ -175,7 +175,7 @@ struct MessageDetailPage {
         allowNetwork,
         false,
         knownAvatarUrl,
-        knownAvatarUrl === ''
+        false
       );
       if (avatarUrl !== '') {
         this.updateAvatarUrl(uid, avatarUrl);

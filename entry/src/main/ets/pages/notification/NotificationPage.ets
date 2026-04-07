@@ -126,7 +126,7 @@ struct NotificationPage {
         continue;
       }
       seen.add(uid);
-      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork);
+      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork, false, '', false);
       if (avatarUrl !== '') {
         this.updateAvatarUrl(uid, avatarUrl);
       }

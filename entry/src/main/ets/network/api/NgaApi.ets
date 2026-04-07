@@ -44,6 +44,17 @@ export class NgaApi {
   private http: HttpClient;
   private baseUrl: string = 'https://bbs.nga.cn';
   private static readonly LOG_TAG: string = 'NgaApi';
+  private static readonly PROFILE_REQUEST_GAP_MS: number = 350;
+  private static readonly PROFILE_HOST_CANDIDATES: string[] = [
+    'https://bbs.ngacn.cc',
+    'https://ngabbs.com',
+    'https://nga.donews.com',
+    'https://nga.178.com',
+    'https://bbs.nga.cn'
+  ];
+  private profileRequestQueue: Promise<void> = Promise.resolve();
+  private profileRequestInFlight: Map<string, Promise<HttpResponse<Record<string, Object>>>> = new Map();
+  private lastProfileRequestAt: number = 0;
 
   private static readonly NGA_RSA_PUB_KEY: string =
     'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyKzZWDimCN1OCprqWUhF' +
@@ -339,6 +350,94 @@ export class NgaApi {
       preview = preview.substring(0, maxLen) + '...(truncated)';
     }
     return preview;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (ms <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  }
+
+  private async withProfileRequestQueue<T>(task: () => Promise<T>): Promise<T> {
+    const previous = this.profileRequestQueue;
+    let releaseCurrent: () => void = () => {};
+    this.profileRequestQueue = new Promise<void>((resolve: () => void) => {
+      releaseCurrent = resolve;
+    });
+
+    await previous;
+    try {
+      const elapsed = Date.now() - this.lastProfileRequestAt;
+      const waitMs = NgaApi.PROFILE_REQUEST_GAP_MS - elapsed;
+      if (waitMs > 0) {
+        await this.sleep(waitMs);
+      }
+      return await task();
+    } finally {
+      this.lastProfileRequestAt = Date.now();
+      releaseCurrent();
+    }
+  }
+
+  private normalizeHost(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    let host = String(raw).trim();
+    while (host.endsWith('/')) {
+      host = host.substring(0, host.length - 1);
+    }
+    return host;
+  }
+
+  private profileHosts(): string[] {
+    const seen: Record<string, boolean> = {};
+    const hosts: string[] = [];
+
+    const addHost = (host: string): void => {
+      const normalized = this.normalizeHost(host);
+      if (normalized === '' || seen[normalized] === true) {
+        return;
+      }
+      seen[normalized] = true;
+      hosts.push(normalized);
+    };
+
+    for (let i = 0; i < NgaApi.PROFILE_HOST_CANDIDATES.length; i++) {
+      addHost(NgaApi.PROFILE_HOST_CANDIDATES[i]);
+    }
+    addHost(this.baseUrl);
+    return hosts;
+  }
+
+  private buildProfileUrl(host: string, uid: string): string {
+    return host + '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&uid=' + encodeURIComponent(uid);
+  }
+
+  private buildProfileReferer(host: string, uid: string): string {
+    return host + '/nuke.php?func=ucp&lite=jsx&uid=' + encodeURIComponent(uid);
+  }
+
+  private shouldRetryProfileResponse(response: HttpResponse<string>): boolean {
+    if (response.code <= 0 || response.code === 503) {
+      return true;
+    }
+    if (response.code >= 500 && response.code < 600) {
+      return true;
+    }
+
+    const raw = response.raw != null ? String(response.raw).trim() : '';
+    if (raw === '') {
+      return true;
+    }
+
+    const preview = raw.substring(0, 120).toLowerCase();
+    return preview.indexOf('<!doctype') >= 0 || preview.indexOf('<html') >= 0;
   }
 
   private normalizeMessageJson(raw: string): string {
@@ -1521,6 +1620,7 @@ export class NgaApi {
             const directAuthor = this.sanitizeDisplayName(directAuthorRaw);
             let userNameCandidate = '';
             let userNicknameCandidate = '';
+            let userAvatarCandidate = '';
 
             const userInfo = this.findUserRecordForPost(userMap, userRecords, authorIdStr, directAuthor);
             if (userInfo != null) {
@@ -1539,6 +1639,10 @@ export class NgaApi {
               if (nickname != null && String(nickname) !== '' && String(nickname) !== 'null') {
                 userNicknameCandidate = String(nickname);
               }
+              const avatar = userInfo['avatar'];
+              if (avatar != null && String(avatar) !== '') {
+                userAvatarCandidate = String(avatar);
+              }
             }
             if (authorIdStr !== '') {
               article.author.uid = authorIdStr;
@@ -1546,6 +1650,9 @@ export class NgaApi {
             const resolvedAuthorName = this.pickDisplayName(directAuthor, userNicknameCandidate, userNameCandidate);
             if (resolvedAuthorName !== '') {
               article.author.username = resolvedAuthorName;
+            }
+            if (userAvatarCandidate !== '') {
+              article.author.avatar = userAvatarCandidate;
             }
 
             const isFirstPost = (i === 0) || (article.floor === 0);
@@ -1993,45 +2100,99 @@ export class NgaApi {
    * 获取用户资料（nuke.php 始终返回 GBK 编码，需用 GBK 解码）
    */
   async getUserProfile(uid: string): Promise<HttpResponse<Record<string, Object>>> {
-    const result = new HttpResponse<Record<string, Object>>();
-
-    try {
-      const uidClean = String(uid).trim();
-      if (uidClean === '' || !/^\d+$/.test(uidClean)) {
-        result.code = 400;
-        result.message = 'UID 无效';
-        return result;
-      }
-      const url = '/nuke.php?__lib=ucp&__act=get&lite=js&noprefix&uid=' + encodeURIComponent(uidClean);
-      console.info('getUserProfile URL: ' + url);
-
-      const response = await this.http.getGbk(url);
-      result.code = response.code;
-      result.message = response.message;
-
-      if (response.code === 200 && response.raw != null && response.raw !== '') {
-        let js = response.raw;
-        const jsPrefix = 'window.script_muti_get_var_store=';
-        if (js.indexOf(jsPrefix) === 0) {
-          js = js.substring(jsPrefix.length);
-        }
-        try {
-          const jsonObj: Record<string, Object> = JSON.parse(js);
-          result.data = jsonObj;
-        } catch (_pe) {
-          result.code = 502;
-          result.message = '资料内容解析失败';
-        }
-      } else if (response.code === 200) {
-        result.message = '服务器返回空数据';
-      }
-    } catch (err) {
-      console.error('getUserProfile failed:', err);
-      result.code = 500;
-      result.message = '请求失败';
+    const uidClean = String(uid).trim();
+    const invalid = new HttpResponse<Record<string, Object>>();
+    if (uidClean === '' || !/^\d+$/.test(uidClean)) {
+      invalid.code = 400;
+      invalid.message = 'UID 无效';
+      return invalid;
     }
 
-    return result;
+    const existingTask = this.profileRequestInFlight.get(uidClean);
+    if (existingTask != null) {
+      LogUtils.i(NgaApi.LOG_TAG, 'getUserProfile reuse in-flight request, uid=' + uidClean);
+      return await existingTask;
+    }
+
+    const task = this.withProfileRequestQueue(async () => {
+      const result = new HttpResponse<Record<string, Object>>();
+      try {
+        const hosts = this.profileHosts();
+        for (let i = 0; i < hosts.length; i++) {
+          const host = hosts[i];
+          const url = this.buildProfileUrl(host, uidClean);
+          const referer = this.buildProfileReferer(host, uidClean);
+          LogUtils.i(
+            NgaApi.LOG_TAG,
+            'getUserProfile request host=' + host +
+            ', uid=' + uidClean +
+            ', attempt=' + String(i + 1) + '/' + String(hosts.length)
+          );
+
+          const response = await this.http.getGbk(url, {
+            'Referer': referer,
+            'Origin': host
+          });
+          result.code = response.code;
+          result.message = response.message;
+          result.raw = response.raw;
+          LogUtils.i(
+            NgaApi.LOG_TAG,
+            'getUserProfile response host=' + host +
+            ', code=' + response.code +
+            ', message=' + response.message +
+            ', uid=' + uidClean +
+            ', rawPreview=' + this.previewRaw(response.raw)
+          );
+
+          if (response.code === 200 && response.raw != null && response.raw.trim() !== '') {
+            const jsonObj = this.parseJsonObject(response.raw);
+            if (jsonObj != null) {
+              result.data = jsonObj;
+              LogUtils.i(NgaApi.LOG_TAG, 'getUserProfile parsed success, uid=' + uidClean + ', host=' + host);
+              return result;
+            }
+            result.code = 502;
+            result.message = '资料内容解析失败';
+            LogUtils.e(NgaApi.LOG_TAG, 'getUserProfile parse failed, uid=' + uidClean + ', host=' + host);
+            return result;
+          }
+
+          if (!this.shouldRetryProfileResponse(response) || i >= hosts.length - 1) {
+            if (response.code === 200) {
+              result.message = response.message !== '' ? response.message : '服务器返回空数据';
+            }
+            LogUtils.w(
+              NgaApi.LOG_TAG,
+              'getUserProfile stop retry, uid=' + uidClean +
+              ', host=' + host +
+              ', code=' + String(response.code)
+            );
+            return result;
+          }
+
+          LogUtils.w(
+            NgaApi.LOG_TAG,
+            'getUserProfile retry next host, uid=' + uidClean +
+            ', failedHost=' + host +
+            ', code=' + String(response.code)
+          );
+        }
+      } catch (err) {
+        console.error('getUserProfile failed:', err);
+        result.code = 500;
+        result.message = '请求失败';
+        LogUtils.e(NgaApi.LOG_TAG, 'getUserProfile exception, uid=' + uidClean + ', err=' + JSON.stringify(err));
+      }
+      return result;
+    });
+
+    this.profileRequestInFlight.set(uidClean, task);
+    try {
+      return await task;
+    } finally {
+      this.profileRequestInFlight.delete(uidClean);
+    }
   }
 }
 
