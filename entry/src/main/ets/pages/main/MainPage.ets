@@ -4,10 +4,14 @@ import { boardManager } from '../../common/manager/BoardManager';
 import { User } from '../../model/entity/User';
 import { BoardCategory, Board } from '../../model/entity/Board';
 import { Topic } from '../../model/entity/Topic';
+import { MessageThread } from '../../model/entity/Message';
 import { ngaApi } from '../../network/api/NgaApi';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 import { AppConstants } from '../../common/constants/AppConstants';
+import { LoadingState } from '../../ui/components/CommonComponents';
+import { LogUtils } from '../../common/utils/LogUtils';
 import router from '@ohos.router';
+import promptAction from '@ohos.promptAction';
 
 @Entry
 @Component
@@ -28,6 +32,17 @@ struct MainPage {
   @State page: number = 1;
   @State isLoading: boolean = false;
   @State loadError: string = '';
+  @State messageThreads: MessageThread[] = [];
+  @State messagePage: number = 1;
+  @State messageTotalPages: number = 1;
+  @State messageLoadingState: LoadingState = LoadingState.LOADING;
+  @State isMessageLoadingMore: boolean = false;
+  @State isMessageRefreshing: boolean = false;
+  @State hasMoreMessages: boolean = false;
+  @State messageError: string = '';
+  private messageListScroller: Scroller = new Scroller();
+  private readonly MESSAGE_REFRESH_THRESHOLD: number = 80;
+  private messageRefreshInFlight: boolean = false;
 
   aboutToAppear() {
     this.initData();
@@ -54,6 +69,11 @@ struct MainPage {
     this.user = userManager.getCurrentUser();
     userManager.setOnUserChanged((user: User | null) => {
       this.user = user;
+      if (user == null || !user.isLoggedIn()) {
+        this.resetMessageThreads();
+      } else if (this.currentIndex === 2 || this.messageThreads.length === 0) {
+        this.ensureMessageThreadsLoaded(true);
+      }
     });
 
     // 加载启动页面设置
@@ -76,6 +96,9 @@ struct MainPage {
     this.initialized = true;
     await this.loadBoards();
     await this.loadTopics();
+    if (this.currentIndex === 2 && this.user != null && this.user.isLoggedIn()) {
+      this.ensureMessageThreadsLoaded(true);
+    }
   }
 
   async loadBoards() {
@@ -159,6 +182,160 @@ struct MainPage {
     }
   }
 
+  private resetMessageThreads() {
+    this.messageThreads = [];
+    this.messagePage = 1;
+    this.messageTotalPages = 1;
+    this.messageLoadingState = LoadingState.LOADING;
+    this.isMessageLoadingMore = false;
+    this.isMessageRefreshing = false;
+    this.hasMoreMessages = false;
+    this.messageError = '';
+    this.messageRefreshInFlight = false;
+  }
+
+  private messageAuthorName(thread: MessageThread): string {
+    const fromUser = thread.fromUserName != null ? thread.fromUserName.trim() : '';
+    if (fromUser !== '') {
+      return fromUser;
+    }
+    return '#SYSTEM#';
+  }
+
+  private messageLastAuthorName(thread: MessageThread): string {
+    const lastUser = thread.lastFromUserName != null ? thread.lastFromUserName.trim() : '';
+    if (lastUser !== '') {
+      return lastUser;
+    }
+    return this.messageAuthorName(thread);
+  }
+
+  private ensureMessageThreadsLoaded(force: boolean = false) {
+    if (this.user == null || !this.user.isLoggedIn()) {
+      this.messageLoadingState = LoadingState.EMPTY;
+      return;
+    }
+    if (force || this.messageThreads.length === 0) {
+      this.loadMessageThreads(true);
+    }
+  }
+
+  async loadMessageThreads(refresh: boolean = true) {
+    if (this.user == null || !this.user.isLoggedIn()) {
+      this.messageLoadingState = LoadingState.EMPTY;
+      return;
+    }
+
+    const hasVisibleThreads = this.messageThreads.length > 0;
+    if (refresh) {
+      this.messagePage = 1;
+      if (!hasVisibleThreads) {
+        this.messageLoadingState = LoadingState.LOADING;
+      }
+    } else {
+      this.isMessageLoadingMore = true;
+    }
+
+    try {
+      LogUtils.i('MainPage', 'loadMessageThreads start, refresh=' + refresh + ', page=' + this.messagePage);
+      const response = await ngaApi.getMessageThreadList(this.messagePage);
+      LogUtils.i(
+        'MainPage',
+        'loadMessageThreads response code=' + response.code +
+        ', message=' + response.message +
+        ', hasData=' + String(response.data != null)
+      );
+      if (response.code === 200 && response.data != null) {
+        const threadList = response.data;
+        if (threadList.errorMsg !== '') {
+          LogUtils.w(
+            'MainPage',
+            'loadMessageThreads data error, page=' + this.messagePage + ', errorMsg=' + threadList.errorMsg
+          );
+          this.messageError = threadList.errorMsg;
+          if (refresh && !hasVisibleThreads) {
+            this.messageLoadingState = LoadingState.ERROR;
+          } else if (refresh) {
+            promptAction.showToast({ message: this.messageError, duration: 1500 });
+          } else {
+            this.messagePage--;
+          }
+          return;
+        }
+
+        this.messageError = '';
+        LogUtils.i(
+          'MainPage',
+          'loadMessageThreads success, page=' + threadList.page +
+          ', threads=' + threadList.threads.length +
+          ', hasMore=' + threadList.hasMore
+        );
+        if (refresh) {
+          this.messageThreads = threadList.threads;
+        } else {
+          for (let i = 0; i < threadList.threads.length; i++) {
+            this.messageThreads.push(threadList.threads[i]);
+          }
+        }
+        this.messageTotalPages = threadList.totalPages;
+        this.hasMoreMessages = threadList.hasMore;
+        this.messageLoadingState = this.messageThreads.length > 0 ? LoadingState.SUCCESS : LoadingState.EMPTY;
+      } else {
+        LogUtils.e(
+          'MainPage',
+          'loadMessageThreads failed response, page=' + this.messagePage + ', message=' + response.message
+        );
+        this.messageError = response.message || '加载失败';
+        if (refresh && !hasVisibleThreads) {
+          this.messageLoadingState = LoadingState.ERROR;
+        } else if (refresh) {
+          promptAction.showToast({ message: this.messageError, duration: 1500 });
+        } else {
+          this.messagePage--;
+        }
+      }
+    } catch (err) {
+      LogUtils.e('MainPage', 'loadMessageThreads exception=' + JSON.stringify(err));
+      this.messageError = '加载失败';
+      if (refresh && !hasVisibleThreads) {
+        this.messageLoadingState = LoadingState.ERROR;
+      } else if (refresh) {
+        promptAction.showToast({ message: this.messageError, duration: 1500 });
+      } else {
+        this.messagePage--;
+      }
+    } finally {
+      this.isMessageLoadingMore = false;
+      this.isMessageRefreshing = false;
+      this.messageRefreshInFlight = false;
+    }
+  }
+
+  loadMoreMessageThreads() {
+    if (!this.hasMoreMessages || this.isMessageLoadingMore || this.messageLoadingState !== LoadingState.SUCCESS) {
+      return;
+    }
+    this.messagePage++;
+    this.loadMessageThreads(false);
+  }
+
+  async doMessageRefresh() {
+    if (this.messageRefreshInFlight) {
+      return;
+    }
+    this.messageRefreshInFlight = true;
+    this.isMessageRefreshing = true;
+    this.messagePage = 1;
+    await this.loadMessageThreads(true);
+  }
+
+  openMessageThread(thread: MessageThread) {
+    router.pushUrl({
+      url: 'pages/message/MessageDetailPage',
+      params: { mid: thread.mid, title: thread.subject }
+    });
+  }
+
   @Builder
   TabIcon(icon: string, label: string, index: number) {
     Column() {
@@ -201,6 +378,9 @@ struct MainPage {
       .barBackgroundColor(ThemeColors.SURFACE_LIGHT)
       .onChange((index: number) => {
         this.currentIndex = index;
+        if (index === 2) {
+          this.ensureMessageThreadsLoaded();
+        }
       })
     }
     .width('100%')
@@ -737,16 +917,22 @@ struct MainPage {
   @Builder
   MessageContent() {
     Column() {
-      // 顶部标题
       Row() {
         Text('消息')
           .fontSize(FontSize.TITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+        Blank()
+        Text('通知')
+          .fontSize(FontSize.NORMAL)
+          .fontColor(ThemeColors.PRIMARY)
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/notification/NotificationPage' });
+          })
       }
       .width('100%')
       .height(56)
-      .padding({ left: 20 })
+      .padding({ left: 20, right: 20 })
       .justifyContent(FlexAlign.Start)
       .alignItems(VerticalAlign.Center)
       .backgroundColor(ThemeColors.SURFACE_LIGHT)
@@ -774,13 +960,171 @@ struct MainPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        Column() {
-          Text('暂无新消息')
-            .fontSize(FontSize.MEDIUM)
-            .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+        if (this.messageLoadingState === LoadingState.LOADING && this.messageThreads.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color(ThemeColors.PRIMARY)
+            Text('正在加载消息...')
+              .fontSize(FontSize.NORMAL)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              .margin({ top: 12 })
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else if (this.messageLoadingState === LoadingState.ERROR && this.messageThreads.length === 0) {
+          Column() {
+            Text(this.messageError !== '' ? this.messageError : '消息加载失败')
+              .fontSize(FontSize.MEDIUM)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+            Button('重试')
+              .fontSize(FontSize.NORMAL)
+              .fontColor('#FFFFFF')
+              .backgroundColor(ThemeColors.PRIMARY)
+              .borderRadius(BorderRadius.EXTRA_LARGE)
+              .height(40)
+              .padding({ left: 24, right: 24 })
+              .margin({ top: 16 })
+              .onClick(() => {
+                this.loadMessageThreads(true);
+              })
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else if (this.messageLoadingState === LoadingState.EMPTY) {
+          Column() {
+            Text('暂无消息')
+              .fontSize(FontSize.MEDIUM)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          Column() {
+            Text('第 ' + this.messagePage + ' / ' + this.messageTotalPages + ' 页')
+              .fontSize(FontSize.EXTRA_SMALL)
+              .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 10, bottom: 2 })
+
+            Refresh({ refreshing: $$this.isMessageRefreshing }) {
+              List({ scroller: this.messageListScroller }) {
+                ForEach(this.messageThreads, (thread: MessageThread) => {
+                  ListItem() {
+                    Column() {
+                      Text(thread.subject !== '' ? thread.subject : '(无标题消息)')
+                        .fontSize(FontSize.MEDIUM)
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
+                        .maxLines(2)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        .lineHeight(22)
+                        .width('100%')
+
+                      Row() {
+                        Row() {
+                          Stack() {
+                            Circle().width(26).height(26).fill(ThemeColors.PRIMARY_LIGHT)
+                            Text(this.authorInitial(this.messageAuthorName(thread)))
+                              .fontSize(12)
+                              .fontColor(ThemeColors.PRIMARY)
+                              .fontWeight(FontWeight.Bold)
+                          }
+                          Column() {
+                            Text(this.messageAuthorName(thread))
+                              .fontSize(FontSize.SMALL)
+                              .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+                            if (thread.time !== '') {
+                              Text(thread.time)
+                                .fontSize(FontSize.EXTRA_SMALL)
+                                .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                                .margin({ top: 2 })
+                            }
+                          }
+                          .alignItems(HorizontalAlign.Start)
+                          .margin({ left: 8 })
+                        }
+
+                        Blank()
+
+                        Column() {
+                          Text(this.messageLastAuthorName(thread))
+                            .fontSize(FontSize.SMALL)
+                            .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+                          Text((thread.posts > 0 ? String(thread.posts) + ' 条 · ' : '') +
+                            (thread.lastTime !== '' ? thread.lastTime : ''))
+                            .fontSize(FontSize.EXTRA_SMALL)
+                            .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                            .margin({ top: 2 })
+                        }
+                        .alignItems(HorizontalAlign.End)
+                      }
+                      .width('100%')
+                      .margin({ top: 12 })
+                    }
+                    .width('100%')
+                    .padding(16)
+                    .backgroundColor(ThemeColors.CARD_BG)
+                    .borderRadius(BorderRadius.MEDIUM)
+                    .margin({ bottom: 8 })
+                    .shadow({ radius: 4, color: '#0000000A', offsetX: 0, offsetY: 2 })
+                    .alignItems(HorizontalAlign.Start)
+                    .onClick(() => {
+                      this.openMessageThread(thread);
+                    })
+                  }
+                }, (thread: MessageThread) => thread.mid)
+
+                if (this.hasMoreMessages) {
+                  ListItem() {
+                    Row() {
+                      if (this.isMessageLoadingMore) {
+                        LoadingProgress().width(20).height(20).color(ThemeColors.PRIMARY)
+                        Text('加载中...')
+                          .fontSize(FontSize.SMALL)
+                          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                          .margin({ left: 8 })
+                      } else {
+                        Text('上拉加载更多')
+                          .fontSize(FontSize.SMALL)
+                          .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                      }
+                    }
+                    .width('100%')
+                    .height(50)
+                    .justifyContent(FlexAlign.Center)
+                  }
+                } else if (this.messageThreads.length > 0) {
+                  ListItem() {
+                    Text('— 已经到底了 —')
+                      .fontSize(FontSize.SMALL)
+                      .fontColor(ThemeColors.TEXT_HINT_LIGHT)
+                      .width('100%')
+                      .textAlign(TextAlign.Center)
+                      .padding(20)
+                  }
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 8 })
+              .edgeEffect(EdgeEffect.Spring)
+              .divider({ strokeWidth: 0 })
+              .onReachEnd(() => {
+                this.loadMoreMessageThreads();
+              })
+            }
+            .layoutWeight(1)
+            .width('100%')
+            .refreshOffset(this.MESSAGE_REFRESH_THRESHOLD)
+            .pullToRefresh(true)
+            .onRefreshing(() => {
+              this.doMessageRefresh();
+            })
+          }
+          .layoutWeight(1)
+          .width('100%')
         }
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
       }
     }
     .width('100%')

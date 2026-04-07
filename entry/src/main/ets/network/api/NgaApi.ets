@@ -3,7 +3,16 @@ import { User } from '../../model/entity/User';
 import { Topic, TopicList } from '../../model/entity/Topic';
 import { Article, ArticleList, Attachment, AttachmentType } from '../../model/entity/Article';
 import { Board, BoardCategory } from '../../model/entity/Board';
-import { Message, MessageList } from '../../model/entity/Message';
+import {
+  Message,
+  MessageList,
+  MessageThread,
+  MessageThreadList,
+  MessageDetail,
+  MessageDetailEntry
+} from '../../model/entity/Message';
+import { NotificationItem, NotificationList } from '../../model/entity/Notification';
+import { LogUtils } from '../../common/utils/LogUtils';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util, buffer } from '@kit.ArkTS';
 
@@ -34,6 +43,7 @@ export class LoginResult {
 export class NgaApi {
   private http: HttpClient;
   private baseUrl: string = 'https://bbs.nga.cn';
+  private static readonly LOG_TAG: string = 'NgaApi';
 
   private static readonly NGA_RSA_PUB_KEY: string =
     'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyKzZWDimCN1OCprqWUhF' +
@@ -303,6 +313,494 @@ export class NgaApi {
       return '';
     }
     return String(Math.floor(n));
+  }
+
+  private stripScriptPrefix(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    let js = raw.replace(/^\uFEFF/, '').trim();
+    js = js.replace(/<script[^>]*>/gi, '');
+    js = js.replace(/<\/script>/gi, '');
+    js = js.replace(/window\.script_muti_get_var_store=/g, '');
+    js = js.replace(/\/\*\$js\$\*\//g, '').trim();
+    if (js.endsWith(';')) {
+      js = js.substring(0, js.length - 1).trim();
+    }
+    return js;
+  }
+
+  private previewRaw(raw: string, maxLen: number = 600): string {
+    if (raw == null || raw === '') {
+      return '<empty>';
+    }
+    let preview = raw.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+    if (preview.length > maxLen) {
+      preview = preview.substring(0, maxLen) + '...(truncated)';
+    }
+    return preview;
+  }
+
+  private normalizeMessageJson(raw: string): string {
+    let js = this.stripScriptPrefix(raw);
+    const errorFillPos = js.indexOf('/*error fill content');
+    if (errorFillPos > 0) {
+      js = js.substring(0, errorFillPos);
+    }
+    js = js.replace(/"content":\+(\d+),/g, '"content":"+$1",');
+    js = js.replace(/"subject":\+(\d+),/g, '"subject":"+$1",');
+    js = js.replace(/"content":(0\d+),/g, '"content":"$1",');
+    js = js.replace(/"subject":(0\d+),/g, '"subject":"$1",');
+    js = js.replace(/"author":(0\d+),/g, '"author":"$1",');
+    js = js.replace(/\[img\]\.\/mon_/g, '[img]http://img6.nga.178.com/attachments/mon_');
+
+    const invalidStart = '"__P":{"aid":';
+    const invalidEnd = '"this_visit_rows":';
+    const invalidStartPos = js.indexOf(invalidStart);
+    const invalidEndPos = js.indexOf(invalidEnd);
+    if (invalidStartPos >= 0 && invalidEndPos > invalidStartPos) {
+      js = js.substring(0, invalidStartPos) + js.substring(invalidEndPos);
+    }
+
+    return js;
+  }
+
+  private sanitizeJsonControlChars(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+
+    let result = '';
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw.charAt(i);
+      const code = raw.charCodeAt(i);
+
+      if (escape) {
+        result += ch;
+        escape = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        result += ch;
+        if (inString) {
+          escape = true;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        result += ch;
+        inString = !inString;
+        continue;
+      }
+
+      if (inString && code < 0x20) {
+        switch (ch) {
+          case '\t':
+            result += '\\t';
+            break;
+          case '\n':
+            result += '\\n';
+            break;
+          case '\r':
+            result += '\\r';
+            break;
+          case '\b':
+            result += '\\b';
+            break;
+          case '\f':
+            result += '\\f';
+            break;
+          default: {
+            const hex = code.toString(16).padStart(4, '0');
+            result += '\\u' + hex;
+            break;
+          }
+        }
+        continue;
+      }
+
+      result += ch;
+    }
+
+    return result;
+  }
+
+  private parseJsonObject(raw: string): Record<string, Object> | null {
+    const normalized = this.sanitizeJsonControlChars(this.stripScriptPrefix(raw));
+    try {
+      return JSON.parse(normalized) as Record<string, Object>;
+    } catch (_error) {
+      LogUtils.w(NgaApi.LOG_TAG, 'parseJsonObject first parse failed, preview=' + this.previewRaw(normalized));
+      const repaired = this.tryFixTruncatedJson(normalized);
+      if (repaired != null) {
+        try {
+          LogUtils.i(NgaApi.LOG_TAG, 'parseJsonObject repaired truncated json successfully');
+          return JSON.parse(repaired) as Record<string, Object>;
+        } catch (_error2) {
+          LogUtils.e(NgaApi.LOG_TAG, 'parseJsonObject repaired parse still failed, preview=' + this.previewRaw(repaired));
+          return null;
+        }
+      }
+      LogUtils.e(NgaApi.LOG_TAG, 'parseJsonObject unable to repair json, preview=' + this.previewRaw(normalized));
+      return null;
+    }
+  }
+
+  private parseMessageJsonObject(raw: string): Record<string, Object> | null {
+    const normalized = this.sanitizeJsonControlChars(this.normalizeMessageJson(raw));
+    try {
+      return JSON.parse(normalized) as Record<string, Object>;
+    } catch (_error) {
+      LogUtils.w(NgaApi.LOG_TAG, 'parseMessageJsonObject first parse failed, preview=' + this.previewRaw(normalized));
+      const repaired = this.tryFixTruncatedJson(normalized);
+      if (repaired != null) {
+        try {
+          LogUtils.i(NgaApi.LOG_TAG, 'parseMessageJsonObject repaired truncated json successfully');
+          return JSON.parse(repaired) as Record<string, Object>;
+        } catch (_error2) {
+          LogUtils.e(NgaApi.LOG_TAG, 'parseMessageJsonObject repaired parse still failed, preview=' + this.previewRaw(repaired));
+          return null;
+        }
+      }
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageJsonObject unable to repair json, preview=' + this.previewRaw(normalized));
+      return null;
+    }
+  }
+
+  private intValue(raw: Object | null | undefined): number {
+    if (raw == null || raw === '') {
+      return 0;
+    }
+    const value = Number(raw);
+    if (!isFinite(value)) {
+      return 0;
+    }
+    return Math.floor(value);
+  }
+
+  private indexedValue(source: Object | null | undefined, index: number): Object | null {
+    if (source == null) {
+      return null;
+    }
+    if (Array.isArray(source)) {
+      const arr = source as Object[];
+      return index >= 0 && index < arr.length ? arr[index] : null;
+    }
+    if (typeof source === 'object') {
+      const obj = source as Record<string, Object>;
+      const value = obj[String(index)];
+      return value != null ? value : null;
+    }
+    return null;
+  }
+
+  private numericObjectKeys(obj: Record<string, Object>): string[] {
+    const keys = Object.keys(obj).filter((key: string) => /^\d+$/.test(key));
+    keys.sort((a: string, b: string) => Number(a) - Number(b));
+    return keys;
+  }
+
+  private formatUnixSeconds(raw: Object | null | undefined): string {
+    const seconds = this.intValue(raw);
+    if (seconds <= 0) {
+      return '';
+    }
+    return this.formatDateTime(seconds * 1000);
+  }
+
+  private formatDateTime(timestamp: number): string {
+    if (!isFinite(timestamp) || timestamp <= 0) {
+      return '';
+    }
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hour = date.getHours().toString().padStart(2, '0');
+    const minute = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day} ${hour}:${minute}`;
+  }
+
+  private parseMessageParticipantList(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+    const normalized = raw.replace(/\t/g, ' ').trim();
+    if (normalized === '') {
+      return '';
+    }
+    const parts = normalized.split(/\s+/);
+    const names: string[] = [];
+    for (let i = 1; i < parts.length; i += 2) {
+      const name = this.sanitizeDisplayName(parts[i]);
+      if (name !== '') {
+        names.push(name);
+      }
+    }
+    return names.join(', ');
+  }
+
+  private parseMessageThreadList(raw: string): MessageThreadList | null {
+    const jsonObj = this.parseMessageJsonObject(raw);
+    if (jsonObj == null) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageThreadList jsonObj is null');
+      return null;
+    }
+
+    const list = new MessageThreadList();
+    const dataField = jsonObj['data'];
+    if (dataField == null || typeof dataField !== 'object' || Array.isArray(dataField)) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageThreadList missing data field, topKeys=' + Object.keys(jsonObj).join(','));
+      list.errorMsg = this.extractErrorMsg(jsonObj) || '请重新登录';
+      return list;
+    }
+
+    const pageObj = (dataField as Record<string, Object>)['0'];
+    if (pageObj == null || typeof pageObj !== 'object' || Array.isArray(pageObj)) {
+      LogUtils.e(
+        NgaApi.LOG_TAG,
+        'parseMessageThreadList missing data.0, dataKeys=' + Object.keys(dataField as Record<string, Object>).join(',')
+      );
+      list.errorMsg = '消息列表为空';
+      return list;
+    }
+
+    const pageData = pageObj as Record<string, Object>;
+    list.page = Math.max(1, this.intValue(pageData['currentPage']));
+    const nextPage = this.intValue(pageData['nextPage']);
+    list.hasMore = nextPage > 0;
+    list.totalPages = nextPage > 0 ? Math.max(list.page + 1, nextPage) : list.page;
+
+    const rowKeys = this.numericObjectKeys(pageData);
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'parseMessageThreadList page=' + list.page + ', next=' + nextPage +
+      ', rows=' + rowKeys.join(',')
+    );
+    for (let i = 0; i < rowKeys.length; i++) {
+      const rowObj = pageData[rowKeys[i]];
+      if (rowObj == null || typeof rowObj !== 'object' || Array.isArray(rowObj)) {
+        continue;
+      }
+      const row = rowObj as Record<string, Object>;
+      if (row['mid'] == null) {
+        continue;
+      }
+
+      const thread = new MessageThread();
+      thread.mid = String(row['mid']);
+      thread.posts = this.intValue(row['posts']);
+      thread.subject = this.decodeHtmlEntities(row['subject'] != null ? String(row['subject']) : '');
+      thread.fromUserName = this.pickDisplayName(
+        row['from_username'] != null ? String(row['from_username']) : '',
+        '',
+        ''
+      );
+      thread.lastFromUserName = this.pickDisplayName(
+        row['last_from_username'] != null ? String(row['last_from_username']) : '',
+        thread.fromUserName,
+        ''
+      );
+      thread.time = this.formatUnixSeconds(row['time']);
+      thread.lastTime = this.formatUnixSeconds(row['last_modify']);
+      list.threads.push(thread);
+    }
+
+    list.totalCount = list.threads.length;
+    LogUtils.i(NgaApi.LOG_TAG, 'parseMessageThreadList parsed threads=' + list.totalCount);
+    return list;
+  }
+
+  private parseMessageDetail(raw: string, mid: string, page: number): MessageDetail | null {
+    const jsonObj = this.parseMessageJsonObject(raw);
+    if (jsonObj == null) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageDetail jsonObj is null, mid=' + mid + ', page=' + page);
+      return null;
+    }
+
+    const detail = new MessageDetail();
+    detail.mid = mid;
+
+    const dataField = jsonObj['data'];
+    if (dataField == null || typeof dataField !== 'object' || Array.isArray(dataField)) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageDetail missing data field, topKeys=' + Object.keys(jsonObj).join(','));
+      detail.errorMsg = this.extractErrorMsg(jsonObj) || '请重新登录';
+      return detail;
+    }
+
+    const pageObj = (dataField as Record<string, Object>)['0'];
+    if (pageObj == null || typeof pageObj !== 'object' || Array.isArray(pageObj)) {
+      LogUtils.e(
+        NgaApi.LOG_TAG,
+        'parseMessageDetail missing data.0, dataKeys=' + Object.keys(dataField as Record<string, Object>).join(',')
+      );
+      detail.errorMsg = '消息详情为空';
+      return detail;
+    }
+
+    const pageData = pageObj as Record<string, Object>;
+    detail.page = Math.max(1, this.intValue(pageData['currentPage']) || page);
+    const nextPage = this.intValue(pageData['nextPage']);
+    detail.hasMore = nextPage > 0;
+    detail.totalPages = nextPage > 0 ? Math.max(detail.page + 1, nextPage) : detail.page;
+    detail.allUsers = this.parseMessageParticipantList(pageData['allUsers'] != null ? String(pageData['allUsers']) : '');
+
+    const userInfoMap = pageData['userInfo'] != null && typeof pageData['userInfo'] === 'object' && !Array.isArray(pageData['userInfo'])
+      ? pageData['userInfo'] as Record<string, Object>
+      : null;
+
+    const allMsgs = pageData['allmsgs'] != null && typeof pageData['allmsgs'] === 'object' && !Array.isArray(pageData['allmsgs'])
+      ? pageData['allmsgs'] as Record<string, Object>
+      : null;
+    if (allMsgs == null) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseMessageDetail missing allmsgs, pageKeys=' + Object.keys(pageData).join(','));
+      detail.errorMsg = '消息详情为空';
+      return detail;
+    }
+
+    const rowKeys = this.numericObjectKeys(allMsgs);
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'parseMessageDetail mid=' + mid + ', page=' + detail.page +
+      ', next=' + nextPage + ', rows=' + rowKeys.join(',')
+    );
+    for (let i = 0; i < rowKeys.length; i++) {
+      const rowObj = allMsgs[rowKeys[i]];
+      if (rowObj == null || typeof rowObj !== 'object' || Array.isArray(rowObj)) {
+        continue;
+      }
+      const row = rowObj as Record<string, Object>;
+      const entry = new MessageDetailEntry();
+      entry.floor = (detail.page - 1) * 20 + i + 1;
+      entry.content = row['content'] != null ? String(row['content']) : '';
+      entry.subject = this.decodeHtmlEntities(row['subject'] != null ? String(row['subject']) : '');
+      entry.time = this.formatUnixSeconds(row['time']);
+      entry.fromUid = this.positiveUidString(row['from']);
+
+      if (userInfoMap != null && entry.fromUid !== '') {
+        const userInfo = userInfoMap[entry.fromUid];
+        if (userInfo != null && typeof userInfo === 'object' && !Array.isArray(userInfo)) {
+          const userObj = userInfo as Record<string, Object>;
+          entry.fromUserName = this.pickDisplayName(
+            userObj['username'] != null ? String(userObj['username']) : '',
+            '',
+            ''
+          );
+          entry.avatarUrl = userObj['avatar'] != null ? String(userObj['avatar']) : '';
+          entry.signature = userObj['signature'] != null ? String(userObj['signature']) : '';
+        }
+      }
+
+      if (entry.fromUserName === '') {
+        entry.fromUserName = '用户 ' + (entry.fromUid !== '' ? entry.fromUid : '?');
+      }
+      detail.entries.push(entry);
+    }
+
+    if (detail.entries.length > 0) {
+      detail.title = detail.entries[0].subject !== '' ? detail.entries[0].subject : '';
+    }
+    LogUtils.i(NgaApi.LOG_TAG, 'parseMessageDetail parsed entries=' + detail.entries.length + ', mid=' + mid);
+    return detail;
+  }
+
+  private parseRecentReplyNotification(itemObj: Object, unread: boolean): NotificationItem {
+    const item = new NotificationItem();
+    item.type = this.intValue(this.indexedValue(itemObj, 0));
+    item.userId = this.positiveUidString(this.indexedValue(itemObj, 1));
+    item.userName = this.pickDisplayName(
+      this.indexedValue(itemObj, 2) != null ? String(this.indexedValue(itemObj, 2)) : '',
+      '',
+      ''
+    );
+    item.title = this.decodeHtmlEntities(this.indexedValue(itemObj, 5) != null ? String(this.indexedValue(itemObj, 5)) : '');
+    item.tidStr = this.indexedValue(itemObj, 6) != null ? String(this.indexedValue(itemObj, 6)) : '';
+    const pidPrimary = this.indexedValue(itemObj, 7);
+    const pidFallback = this.indexedValue(itemObj, 8);
+    item.pidStr = pidPrimary != null && String(pidPrimary) !== '' ? String(pidPrimary) : (pidFallback != null ? String(pidFallback) : '');
+    item.timeStamp = this.indexedValue(itemObj, 9) != null ? String(this.indexedValue(itemObj, 9)) : '';
+    item.timeText = this.formatUnixSeconds(item.timeStamp as Object);
+    item.isUnread = unread;
+    item.isMessageNotice = false;
+    return item;
+  }
+
+  private parseMessageNotification(itemObj: Object, unread: boolean): NotificationItem {
+    const item = new NotificationItem();
+    item.type = this.intValue(this.indexedValue(itemObj, 0));
+    item.userId = this.positiveUidString(this.indexedValue(itemObj, 1));
+    item.userName = this.pickDisplayName(
+      this.indexedValue(itemObj, 2) != null ? String(this.indexedValue(itemObj, 2)) : '',
+      '',
+      ''
+    );
+    item.title = this.decodeHtmlEntities(this.indexedValue(itemObj, 5) != null ? String(this.indexedValue(itemObj, 5)) : '');
+    item.midStr = this.indexedValue(itemObj, 6) != null ? String(this.indexedValue(itemObj, 6)) : '';
+    item.timeStamp = this.indexedValue(itemObj, 9) != null ? String(this.indexedValue(itemObj, 9)) : '';
+    item.timeText = this.formatUnixSeconds(item.timeStamp as Object);
+    item.isUnread = unread;
+    item.isMessageNotice = true;
+    return item;
+  }
+
+  private parseNotificationList(raw: string): NotificationList | null {
+    const jsonObj = this.parseJsonObject(raw);
+    if (jsonObj == null) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseNotificationList jsonObj is null');
+      return null;
+    }
+
+    const list = new NotificationList();
+    const dataField = jsonObj['data'];
+    if (dataField == null || typeof dataField !== 'object' || Array.isArray(dataField)) {
+      LogUtils.e(NgaApi.LOG_TAG, 'parseNotificationList missing data field, topKeys=' + Object.keys(jsonObj).join(','));
+      list.errorMsg = this.extractErrorMsg(jsonObj) || '请重新登录';
+      return list;
+    }
+
+    const root = (dataField as Record<string, Object>)['0'];
+    if (root == null || typeof root !== 'object' || Array.isArray(root)) {
+      LogUtils.e(
+        NgaApi.LOG_TAG,
+        'parseNotificationList missing data.0, dataKeys=' + Object.keys(dataField as Record<string, Object>).join(',')
+      );
+      list.errorMsg = '通知列表为空';
+      return list;
+    }
+
+    const rootObj = root as Record<string, Object>;
+    list.unreadCount = this.intValue(rootObj['unread']);
+    const unread = list.unreadCount > 0;
+
+    const recentReplyArray = rootObj['0'];
+    if (Array.isArray(recentReplyArray)) {
+      const arr = recentReplyArray as Object[];
+      for (let i = 0; i < arr.length; i++) {
+        list.notifications.push(this.parseRecentReplyNotification(arr[i], unread));
+      }
+    }
+
+    const messageArray = rootObj['1'];
+    if (Array.isArray(messageArray)) {
+      const arr = messageArray as Object[];
+      for (let i = 0; i < arr.length; i++) {
+        list.notifications.push(this.parseMessageNotification(arr[i], unread));
+      }
+    }
+
+    list.notifications.sort((a: NotificationItem, b: NotificationItem) => {
+      return this.intValue(b.timeStamp as Object) - this.intValue(a.timeStamp as Object);
+    });
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'parseNotificationList parsed notifications=' + list.notifications.length + ', unread=' + list.unreadCount
+    );
+    return list;
   }
 
   private findUserRecordForPost(
@@ -1163,6 +1661,139 @@ export class NgaApi {
       return 'https://img.nga.178.com' + url;
     }
     return 'https://img.nga.178.com/attachments/' + url;
+  }
+
+  async getMessageThreadList(page: number): Promise<HttpResponse<MessageThreadList>> {
+    const result = new HttpResponse<MessageThreadList>();
+    const url = '/nuke.php?__lib=message&__act=message&act=list&page=' + page + '&lite=js';
+    LogUtils.i(NgaApi.LOG_TAG, 'getMessageThreadList request url=' + url);
+    const response = await this.http.getGbk(url);
+    result.code = response.code;
+    result.message = response.message;
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'getMessageThreadList response code=' + response.code +
+      ', message=' + response.message +
+      ', rawPreview=' + this.previewRaw(response.raw)
+    );
+
+    if (response.code === 200 && response.raw !== '') {
+      const parsed = this.parseMessageThreadList(response.raw);
+      if (parsed != null) {
+        result.data = parsed;
+        result.message = parsed.errorMsg !== '' ? parsed.errorMsg : 'Success';
+        LogUtils.i(
+          NgaApi.LOG_TAG,
+          'getMessageThreadList parsed success, page=' + parsed.page +
+          ', totalCount=' + parsed.totalCount + ', errorMsg=' + parsed.errorMsg
+        );
+      } else {
+        result.code = 502;
+        result.message = '消息列表解析失败';
+        LogUtils.e(NgaApi.LOG_TAG, 'getMessageThreadList parse returned null');
+      }
+    } else if (response.code === 200) {
+      result.message = '服务器返回空数据';
+      LogUtils.w(NgaApi.LOG_TAG, 'getMessageThreadList empty body');
+    }
+
+    return result;
+  }
+
+  async getMessageDetail(mid: string, page: number): Promise<HttpResponse<MessageDetail>> {
+    const result = new HttpResponse<MessageDetail>();
+    const normalizedMid = String(mid).trim();
+    if (!/^\d+$/.test(normalizedMid)) {
+      result.code = 400;
+      result.message = '消息 ID 无效';
+      return result;
+    }
+
+    const url = '/nuke.php?__lib=message&__act=message&act=read&page=' + page +
+      '&mid=' + encodeURIComponent(normalizedMid) + '&lite=js';
+    LogUtils.i(NgaApi.LOG_TAG, 'getMessageDetail request url=' + url);
+    const response = await this.http.getGbk(url);
+    result.code = response.code;
+    result.message = response.message;
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'getMessageDetail response code=' + response.code +
+      ', message=' + response.message +
+      ', mid=' + normalizedMid +
+      ', rawPreview=' + this.previewRaw(response.raw)
+    );
+
+    if (response.code === 200 && response.raw !== '') {
+      const parsed = this.parseMessageDetail(response.raw, normalizedMid, page);
+      if (parsed != null) {
+        result.data = parsed;
+        result.message = parsed.errorMsg !== '' ? parsed.errorMsg : 'Success';
+        LogUtils.i(
+          NgaApi.LOG_TAG,
+          'getMessageDetail parsed success, mid=' + normalizedMid +
+          ', page=' + parsed.page + ', entries=' + parsed.entries.length +
+          ', errorMsg=' + parsed.errorMsg
+        );
+      } else {
+        result.code = 502;
+        result.message = '消息详情解析失败';
+        LogUtils.e(NgaApi.LOG_TAG, 'getMessageDetail parse returned null, mid=' + normalizedMid);
+      }
+    } else if (response.code === 200) {
+      result.message = '服务器返回空数据';
+      LogUtils.w(NgaApi.LOG_TAG, 'getMessageDetail empty body, mid=' + normalizedMid);
+    }
+
+    return result;
+  }
+
+  async getNotificationList(): Promise<HttpResponse<NotificationList>> {
+    const result = new HttpResponse<NotificationList>();
+    const url = '/nuke.php?__lib=noti&__output=8&__act=get_all';
+    LogUtils.i(NgaApi.LOG_TAG, 'getNotificationList request url=' + url);
+    const response = await this.http.getGbk(url);
+    result.code = response.code;
+    result.message = response.message;
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'getNotificationList response code=' + response.code +
+      ', message=' + response.message +
+      ', rawPreview=' + this.previewRaw(response.raw)
+    );
+
+    if (response.code === 200 && response.raw !== '') {
+      const parsed = this.parseNotificationList(response.raw);
+      if (parsed != null) {
+        result.data = parsed;
+        result.message = parsed.errorMsg !== '' ? parsed.errorMsg : 'Success';
+        LogUtils.i(
+          NgaApi.LOG_TAG,
+          'getNotificationList parsed success, count=' + parsed.notifications.length +
+          ', unread=' + parsed.unreadCount + ', errorMsg=' + parsed.errorMsg
+        );
+      } else {
+        result.code = 502;
+        result.message = '通知列表解析失败';
+        LogUtils.e(NgaApi.LOG_TAG, 'getNotificationList parse returned null');
+      }
+    } else if (response.code === 200) {
+      result.message = '服务器返回空数据';
+      LogUtils.w(NgaApi.LOG_TAG, 'getNotificationList empty body');
+    }
+
+    return result;
+  }
+
+  async clearAllNotifications(): Promise<HttpResponse<boolean>> {
+    const result = new HttpResponse<boolean>();
+    const response = await this.http.post('/nuke.php?__lib=noti&raw=3&__act=del', '');
+    result.code = response.code;
+    result.message = response.message;
+    result.data = response.code === 200;
+    if (response.code === 200 && result.message === '') {
+      result.message = 'Success';
+    }
+    return result;
   }
 
   /**

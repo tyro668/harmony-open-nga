@@ -262,6 +262,42 @@ export class HttpClient {
     return response;
   }
 
+  async getBytes(url: string): Promise<ArrayBuffer | null> {
+    const httpRequest = http.createHttp();
+
+    try {
+      let fullUrl = url;
+      if (!url.startsWith('http')) {
+        fullUrl = this.baseUrl + url;
+      }
+
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        header: {
+          'User-Agent': HttpClient.UA,
+          'Accept': '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'X-User-Agent': 'Nga_Official',
+          'Cookie': this.cookie
+        } as Record<string, string>,
+        connectTimeout: 30000,
+        readTimeout: 30000
+      };
+
+      const httpResponse = await httpRequest.request(fullUrl, options);
+      if (httpResponse.responseCode === 200 && httpResponse.result instanceof ArrayBuffer) {
+        return httpResponse.result;
+      }
+    } catch (err) {
+      console.error('getBytes failed:', err);
+    } finally {
+      httpRequest.destroy();
+    }
+
+    return null;
+  }
+
   /**
    * 下载验证码图片，同时捕获服务器回传的 ngaPassportOid cookie
    */

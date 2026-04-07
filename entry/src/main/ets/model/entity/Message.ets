@@ -57,3 +57,56 @@ export class MessageList {
 
   constructor() {}
 }
+
+/**
+ * 私信会话列表项
+ */
+export class MessageThread {
+  mid: string = '';
+  subject: string = '';
+  time: string = '';
+  lastTime: string = '';
+  posts: number = 0;
+  fromUserName: string = '';
+  lastFromUserName: string = '';
+}
+
+/**
+ * 私信会话列表
+ */
+export class MessageThreadList {
+  threads: MessageThread[] = [];
+  page: number = 1;
+  totalPages: number = 1;
+  totalCount: number = 0;
+  hasMore: boolean = false;
+  errorMsg: string = '';
+}
+
+/**
+ * 私信详情中的单条消息
+ */
+export class MessageDetailEntry {
+  floor: number = 0;
+  fromUid: string = '';
+  fromUserName: string = '';
+  avatarUrl: string = '';
+  time: string = '';
+  subject: string = '';
+  content: string = '';
+  signature: string = '';
+}
+
+/**
+ * 私信会话详情
+ */
+export class MessageDetail {
+  mid: string = '';
+  title: string = '';
+  allUsers: string = '';
+  page: number = 1;
+  totalPages: number = 1;
+  hasMore: boolean = false;
+  errorMsg: string = '';
+  entries: MessageDetailEntry[] = [];
+}

@@ -8,6 +8,8 @@ import { NgaApi } from '../../network/api/NgaApi';
 import { HttpClient } from '../../network/api/HttpClient';
 import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 import { userManager } from '../../common/manager/UserManager';
+import { AvatarView } from '../../ui/components/CommonComponents';
+import { avatarCacheManager } from '../../common/manager/AvatarCacheManager';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 import connection from '@ohos.net.connection';
@@ -103,6 +105,7 @@ struct ArticleListPage {
   @State replyToUser: string = '';
   @State isReplying: boolean = false;
   @State useOriginalImagesInPost: boolean = false;
+  @State avatarUrls: Record<string, string> = {};
   private apiHelper: NgaApi = new NgaApi();
 
   aboutToAppear() {
@@ -149,6 +152,54 @@ struct ArticleListPage {
     }
     const params: Record<string, Object> = { 'uid': id, 'name': username != null ? username : '' };
     router.pushUrl({ url: 'pages/profile/ProfilePage', params: params });
+  }
+
+  private avatarUrlForUid(uid: string): string {
+    const normalizedUid = uid != null ? String(uid).trim() : '';
+    if (normalizedUid === '') {
+      return '';
+    }
+    const cached = this.avatarUrls[normalizedUid];
+    return cached != null ? cached : '';
+  }
+
+  private updateAvatarUrl(uid: string, avatarUrl: string) {
+    const normalizedUid = uid != null ? String(uid).trim() : '';
+    if (normalizedUid === '' || avatarUrl === '') {
+      return;
+    }
+    if (this.avatarUrls[normalizedUid] === avatarUrl) {
+      return;
+    }
+    const nextState: Record<string, string> = {};
+    const keys = Object.keys(this.avatarUrls);
+    for (let i = 0; i < keys.length; i++) {
+      nextState[keys[i]] = this.avatarUrls[keys[i]];
+    }
+    nextState[normalizedUid] = avatarUrl;
+    this.avatarUrls = nextState;
+  }
+
+  private async warmArticleAvatars(articlesToWarm: Article[]) {
+    if (articlesToWarm.length === 0) {
+      return;
+    }
+
+    const context = getContext(this) as common.UIAbilityContext;
+    const allowNetwork = await avatarCacheManager.isWifiConnection();
+    const seen: Set<string> = new Set<string>();
+
+    for (let i = 0; i < articlesToWarm.length; i++) {
+      const uid = articlesToWarm[i].author.uid != null ? String(articlesToWarm[i].author.uid).trim() : '';
+      if (!/^\d+$/.test(uid) || uid === '0' || seen.has(uid)) {
+        continue;
+      }
+      seen.add(uid);
+      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork);
+      if (avatarUrl !== '') {
+        this.updateAvatarUrl(uid, avatarUrl);
+      }
+    }
   }
 
   private refreshArticleList() {
@@ -293,6 +344,7 @@ struct ArticleListPage {
         } else {
           this.articles = data.articles;
         }
+        this.warmArticleAvatars(this.articles);
 
         if (this.articles.length === 0 && !loadMore) {
           this.loadError = '该帖子暂无可显示的内容';
@@ -1331,14 +1383,11 @@ struct ArticleListPage {
       // 作者信息
       Row() {
         // 头像（可点击）
-        Stack() {
-          Circle().width(36).height(36).fill(ThemeColors.PRIMARY_LIGHT)
-          Text(this.authorInitial(article.author.username))
-            .fontSize(14)
-            .fontColor(ThemeColors.PRIMARY)
-            .fontWeight(FontWeight.Bold)
-            .fontFamily(ThemeColors.FONT_FAMILY_UI)
-        }
+        AvatarView({
+          url: this.avatarUrlForUid(article.author.uid),
+          avatarSize: 36,
+          placeholder: this.authorInitial(article.author.username)
+        })
         .onClick(() => {
           this.goToUserProfile(article.author.uid, article.author.username);
         })

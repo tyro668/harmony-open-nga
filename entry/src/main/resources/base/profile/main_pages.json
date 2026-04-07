@@ -10,6 +10,7 @@
     "pages/history/HistoryPage",
     "pages/notification/NotificationPage",
     "pages/search/SearchPage",
+    "pages/message/MessageDetailPage",
     "pages/post/PostPage",
     "pages/profile/ProfilePage",
     "pages/board/BoardListPage",

@@ -3,9 +3,11 @@ import { Topic } from '../../model/entity/Topic';
 import { Board } from '../../model/entity/Board';
 import { ngaApi } from '../../network/api/NgaApi';
 import { boardManager } from '../../common/manager/BoardManager';
-import { LoadingState } from '../../ui/components/CommonComponents';
+import { LoadingState, AvatarView } from '../../ui/components/CommonComponents';
+import { avatarCacheManager } from '../../common/manager/AvatarCacheManager';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
+import common from '@ohos.app.ability.common';
 
 @Entry
 @Component
@@ -25,6 +27,7 @@ struct TopicListPage {
   @State errorMsg: string = '';
   @State showMenu: boolean = false;
   @State isBookmarked: boolean = false;
+  @State avatarUrls: Record<string, string> = {};
 
   private listScroller: Scroller = new Scroller();
   private readonly REFRESH_THRESHOLD: number = 80;
@@ -102,6 +105,54 @@ struct TopicListPage {
     return topic.subject + '_' + topic.postDate + '_' + topic.author.username;
   }
 
+  private avatarUrlForUid(uid: string): string {
+    const normalizedUid = uid != null ? String(uid).trim() : '';
+    if (normalizedUid === '') {
+      return '';
+    }
+    const cached = this.avatarUrls[normalizedUid];
+    return cached != null ? cached : '';
+  }
+
+  private updateAvatarUrl(uid: string, avatarUrl: string) {
+    const normalizedUid = uid != null ? String(uid).trim() : '';
+    if (normalizedUid === '' || avatarUrl === '') {
+      return;
+    }
+    if (this.avatarUrls[normalizedUid] === avatarUrl) {
+      return;
+    }
+    const nextState: Record<string, string> = {};
+    const keys = Object.keys(this.avatarUrls);
+    for (let i = 0; i < keys.length; i++) {
+      nextState[keys[i]] = this.avatarUrls[keys[i]];
+    }
+    nextState[normalizedUid] = avatarUrl;
+    this.avatarUrls = nextState;
+  }
+
+  private async warmTopicAvatars(topicsToWarm: Topic[]) {
+    if (topicsToWarm.length === 0) {
+      return;
+    }
+
+    const context = getContext(this) as common.UIAbilityContext;
+    const allowNetwork = await avatarCacheManager.isWifiConnection();
+    const seen: Set<string> = new Set<string>();
+
+    for (let i = 0; i < topicsToWarm.length; i++) {
+      const uid = topicsToWarm[i].author.uid != null ? String(topicsToWarm[i].author.uid).trim() : '';
+      if (!/^\d+$/.test(uid) || uid === '0' || seen.has(uid)) {
+        continue;
+      }
+      seen.add(uid);
+      const avatarUrl = await avatarCacheManager.loadAvatar(context, uid, allowNetwork);
+      if (avatarUrl !== '') {
+        this.updateAvatarUrl(uid, avatarUrl);
+      }
+    }
+  }
+
   private appendUniqueTopics(incomingTopics: Topic[], refresh: boolean): number {
     const uniqueTopics: Topic[] = [];
     for (let i = 0; i < incomingTopics.length; i++) {
@@ -163,6 +214,7 @@ struct TopicListPage {
           this.totalPages = topicList.totalPages;
           this.hasMore = topicList.hasMore;
           this.loadingState = this.topics.length > 0 ? LoadingState.SUCCESS : LoadingState.EMPTY;
+          this.warmTopicAvatars(this.topics);
 
           if (!refresh && appendedCount === 0 && topicList.hasMore && this.page < topicList.totalPages) {
             this.page++;
@@ -460,14 +512,11 @@ struct TopicListPage {
       // 底部信息
       Row() {
         Row() {
-          Stack() {
-            Circle().width(20).height(20).fill(ThemeColors.PRIMARY_LIGHT)
-            Text(this.authorInitial(topic.author.username))
-              .fontSize(9)
-              .fontColor(ThemeColors.PRIMARY)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(ThemeColors.FONT_FAMILY_UI)
-          }
+          AvatarView({
+            url: this.avatarUrlForUid(topic.author.uid),
+            avatarSize: 20,
+            placeholder: this.authorInitial(topic.author.username)
+          })
           Text(topic.author.username || '匿名')
             .fontSize(FontSize.SMALL)
             .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)

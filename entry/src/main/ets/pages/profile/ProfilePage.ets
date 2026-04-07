@@ -1,7 +1,9 @@
 import router from '@ohos.router';
 import { ngaApi } from '../../network/api/NgaApi';
 import { ThemeColors, FontSize, Spacing, BorderRadius } from '../../common/constants/ThemeColors';
-import { LoadingState } from '../../ui/components/CommonComponents';
+import { LoadingState, AvatarView } from '../../ui/components/CommonComponents';
+import { avatarCacheManager } from '../../common/manager/AvatarCacheManager';
+import common from '@ohos.app.ability.common';
 
 class ProfileData {
   uid: string = '';
@@ -31,6 +33,7 @@ struct ProfilePage {
   @State userName: string = '';
   /** 接口返回业务错误时的说明（仍可能展示部分资料） */
   @State profileLoadNote: string = '';
+  @State cachedAvatarUrl: string = '';
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
@@ -121,6 +124,7 @@ struct ProfilePage {
   async loadProfile() {
     this.loadingState = LoadingState.LOADING;
     this.profileLoadNote = '';
+    this.cachedAvatarUrl = '';
     try {
       const response = await ngaApi.getUserProfile(this.uid);
 
@@ -130,6 +134,7 @@ struct ProfilePage {
           this.profile.uid = this.uid;
         }
         this.applyDisplayNameFallbacks();
+        this.refreshProfileAvatar(true);
         // 只要拿到 JSON 且存在数字 UID，即展示资料页（避免「仅有 UID 占位昵称」被判失败）
         if (parsedBody && /^\d+$/.test((this.profile.uid || this.uid).trim())) {
           this.loadingState = LoadingState.SUCCESS;
@@ -144,6 +149,28 @@ struct ProfilePage {
       console.error('Load profile failed:', err);
       this.profileLoadNote = '请求异常';
       this.loadingState = LoadingState.ERROR;
+    }
+  }
+
+  private async refreshProfileAvatar(forceRefresh: boolean = true) {
+    const targetUid = (this.profile.uid || this.uid).trim();
+    if (!/^\d+$/.test(targetUid) || targetUid === '0') {
+      return;
+    }
+
+    const context = getContext(this) as common.UIAbilityContext;
+    const avatarUrl = await avatarCacheManager.loadAvatar(
+      context,
+      targetUid,
+      true,
+      forceRefresh,
+      this.profile.avatarUrl,
+      false
+    );
+    if (avatarUrl !== '') {
+      this.cachedAvatarUrl = avatarUrl;
+    } else if (this.profile.avatarUrl !== '') {
+      this.cachedAvatarUrl = this.profile.avatarUrl;
     }
   }
 
@@ -293,12 +320,11 @@ struct ProfilePage {
             }
             // 用户头像卡片
             Column() {
-              Stack() {
-                Circle().width(80).height(80).fill(ThemeColors.PRIMARY_LIGHT)
-                Text(this.nameFirstGlyph(this.profile.userName))
-                  .fontSize(32).fontColor(ThemeColors.PRIMARY).fontWeight(FontWeight.Bold)
-                  .fontFamily(ThemeColors.FONT_FAMILY_UI)
-              }
+              AvatarView({
+                url: this.cachedAvatarUrl !== '' ? this.cachedAvatarUrl : this.profile.avatarUrl,
+                avatarSize: 80,
+                placeholder: this.nameFirstGlyph(this.profile.userName)
+              })
               Text(this.profile.userName || '用户')
                 .fontSize(FontSize.TITLE).fontWeight(FontWeight.Bold)
                 .fontColor(ThemeColors.TEXT_PRIMARY_LIGHT)
