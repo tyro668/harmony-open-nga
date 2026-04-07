@@ -10,10 +10,13 @@ import { PreferencesManager } from '../../data/preferences/PreferencesManager';
 import { userManager } from '../../common/manager/UserManager';
 import { AvatarView } from '../../ui/components/CommonComponents';
 import { avatarCacheManager } from '../../common/manager/AvatarCacheManager';
+import { LogUtils } from '../../common/utils/LogUtils';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 import connection from '@ohos.net.connection';
 import common from '@ohos.app.ability.common';
+
+const ARTICLE_PAGE_LOG_TAG = 'ArticlePage';
 
 class ContentSegment {
   type: string = 'text';
@@ -106,23 +109,121 @@ struct ArticleListPage {
   @State isReplying: boolean = false;
   @State useOriginalImagesInPost: boolean = false;
   @State avatarUrls: Record<string, string> = {};
+  @State debugLogContent: boolean = false;
+  @State debugSource: string = '';
   private apiHelper: NgaApi = new NgaApi();
+
+  private normalizeTidParam(raw: string): string {
+    const text = raw != null ? String(raw).trim() : '';
+    if (text === '') {
+      return '';
+    }
+    if (/^\d+$/.test(text)) {
+      return text;
+    }
+
+    const queryMatch = /(?:[?&#])tid=(\d+)/i.exec(text);
+    if (queryMatch != null) {
+      return queryMatch[1];
+    }
+
+    return text;
+  }
+
+  private parseBooleanParam(raw: Object | null | undefined): boolean {
+    if (raw == null) {
+      return false;
+    }
+    if (typeof raw === 'boolean') {
+      return raw as boolean;
+    }
+    const text = String(raw).trim().toLowerCase();
+    return text === '1' || text === 'true' || text === 'yes';
+  }
+
+  private normalizeLogText(raw: string): string {
+    return (raw != null ? String(raw) : '')
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n');
+  }
+
+  private logDebugArticleContents(pageArticles: Article[]) {
+    if (!this.debugLogContent) {
+      return;
+    }
+
+    LogUtils.i(
+      ARTICLE_PAGE_LOG_TAG,
+      'debug article dump start tid=' + this.tid +
+      ', page=' + this.page +
+      ', source=' + this.debugSource +
+      ', count=' + pageArticles.length
+    );
+
+    for (let i = 0; i < pageArticles.length; i++) {
+      const article = pageArticles[i];
+      const header =
+        'debug article floor=' + article.floor +
+        ', pid=' + article.pid +
+        ', uid=' + article.author.uid +
+        ', author=' + this.normalizeLogText(article.author.username) +
+        ', note=' + this.normalizeLogText(article.noteInfo);
+      LogUtils.i(ARTICLE_PAGE_LOG_TAG, header);
+
+      const content = this.normalizeLogText(article.content);
+      if (content === '') {
+        LogUtils.i(ARTICLE_PAGE_LOG_TAG, 'debug article content floor=' + article.floor + ' <empty>');
+        continue;
+      }
+
+      const chunkSize = 700;
+      for (let start = 0; start < content.length; start += chunkSize) {
+        const chunk = content.substring(start, Math.min(start + chunkSize, content.length));
+        LogUtils.i(
+          ARTICLE_PAGE_LOG_TAG,
+          'debug article content floor=' + article.floor +
+          ', chunk=' + String(Math.floor(start / chunkSize) + 1) +
+          ': ' + chunk
+        );
+      }
+    }
+
+    LogUtils.i(ARTICLE_PAGE_LOG_TAG, 'debug article dump finish tid=' + this.tid + ', page=' + this.page);
+  }
 
   aboutToAppear() {
     const params = router.getParams() as Record<string, Object>;
     if (params != null) {
       const tidParam = params['tid'];
       if (tidParam != null) {
-        this.tid = String(tidParam);
+        const rawTid = String(tidParam);
+        this.tid = this.normalizeTidParam(rawTid);
+        if (this.tid !== rawTid) {
+          LogUtils.w(ARTICLE_PAGE_LOG_TAG, 'aboutToAppear normalized tid from ' + rawTid + ' to ' + this.tid);
+        }
       }
       const titleParam = params['title'];
       if (titleParam != null) {
         this.subject = String(titleParam);
       }
+      this.debugLogContent = this.parseBooleanParam(params['debugLogContent']);
+      if (params['debugSource'] != null) {
+        this.debugSource = String(params['debugSource']);
+      }
+      LogUtils.i(
+        ARTICLE_PAGE_LOG_TAG,
+        'aboutToAppear paramsKeys=' + Object.keys(params).join(',') +
+        ', tid=' + this.tid +
+        ', title=' + this.subject +
+        ', debugLogContent=' + String(this.debugLogContent) +
+        ', debugSource=' + this.debugSource
+      );
     }
     this.updateInlineImageNetworkMode();
     if (this.tid != '') {
       this.loadArticles();
+    } else {
+      LogUtils.w(ARTICLE_PAGE_LOG_TAG, 'aboutToAppear missing tid, skip loadArticles');
     }
   }
 
@@ -318,12 +419,36 @@ struct ArticleListPage {
       this.isLoading = true;
       this.loadError = '';
     }
+    LogUtils.i(
+      ARTICLE_PAGE_LOG_TAG,
+      'loadArticles start tid=' + this.tid +
+      ', page=' + this.page +
+      ', loadMore=' + loadMore +
+      ', currentCount=' + this.articles.length
+    );
 
     try {
       const response = await ngaApi.getArticleList(this.tid, this.page);
+      LogUtils.i(
+        ARTICLE_PAGE_LOG_TAG,
+        'loadArticles response tid=' + this.tid +
+        ', page=' + this.page +
+        ', code=' + response.code +
+        ', message=' + response.message +
+        ', hasData=' + String(response.data != null)
+      );
       if (response.code === 200 && response.data != null) {
         const data = response.data;
         if (data.errorMsg) {
+          LogUtils.w(
+            ARTICLE_PAGE_LOG_TAG,
+            'loadArticles data error tid=' + this.tid +
+            ', page=' + this.page +
+            ', errorMsg=' + data.errorMsg +
+            ', subject=' + data.subject +
+            ', totalCount=' + data.totalCount +
+            ', articles=' + data.articles.length
+          );
           this.loadError = data.errorMsg;
           return;
         }
@@ -346,16 +471,43 @@ struct ArticleListPage {
           this.articles = data.articles;
         }
         this.warmArticleAvatars(this.articles);
+        this.logDebugArticleContents(data.articles);
+        LogUtils.i(
+          ARTICLE_PAGE_LOG_TAG,
+          'loadArticles parsed tid=' + this.tid +
+          ', page=' + this.page +
+          ', subject=' + this.subject +
+          ', totalCount=' + this.totalCount +
+          ', totalPages=' + this.totalPages +
+          ', pageArticles=' + data.articles.length +
+          ', currentArticles=' + this.articles.length +
+          ', hasMore=' + this.hasMore
+        );
 
         if (this.articles.length === 0 && !loadMore) {
-          this.loadError = '该帖子暂无可显示的内容';
+          LogUtils.w(
+            ARTICLE_PAGE_LOG_TAG,
+            'loadArticles empty result tid=' + this.tid +
+            ', page=' + this.page +
+            ', subject=' + this.subject +
+            ', totalCount=' + this.totalCount
+          );
+          this.loadError = '帖子#' + (this.tid !== '' ? this.tid : '?') + '暂无可显示内容';
         }
       } else {
+        LogUtils.w(
+          ARTICLE_PAGE_LOG_TAG,
+          'loadArticles request failed tid=' + this.tid +
+          ', page=' + this.page +
+          ', code=' + response.code +
+          ', message=' + response.message
+        );
         this.loadError = response.message || '加载失败';
       }
     } catch (err) {
       this.loadError = '网络错误';
       console.error('Load articles failed:', err);
+      LogUtils.e(ARTICLE_PAGE_LOG_TAG, 'loadArticles exception tid=' + this.tid + ', page=' + this.page + ', err=' + JSON.stringify(err));
     } finally {
       this.isLoading = false;
       this.isLoadingMore = false;

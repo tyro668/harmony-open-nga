@@ -13,6 +13,7 @@
     "pages/message/MessageDetailPage",
     "pages/post/PostPage",
     "pages/profile/ProfilePage",
+    "pages/debug/DebugToolsPage",
     "pages/board/BoardListPage",
     "pages/image/ImageViewerPage"
   ]

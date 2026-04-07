@@ -44,6 +44,9 @@ export class NgaApi {
   private http: HttpClient;
   private baseUrl: string = 'https://bbs.nga.cn';
   private static readonly LOG_TAG: string = 'NgaApi';
+  private static readonly ANONYMOUS_NAME_PREFIX: string = '甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥';
+  private static readonly ANONYMOUS_NAME_SUFFIX: string =
+    '王李张刘陈杨黄吴赵周徐孙马朱胡林郭何高罗郑梁谢宋唐许邓冯韩曹曾彭萧蔡潘田董袁于余叶蒋杜苏魏程吕丁沈任姚卢傅钟姜崔谭廖范汪陆金石戴贾韦夏邱方侯邹熊孟秦白江阎薛尹段雷黎史龙陶贺顾毛郝龚邵万钱严赖覃洪武莫孔汤向常温康施文牛樊葛邢安齐易乔伍庞颜倪庄聂章鲁岳翟殷詹申欧耿关兰焦俞左柳甘祝包宁尚符舒阮柯纪梅童凌毕单季裴霍涂成苗谷盛曲翁冉骆蓝路游辛靳管柴蒙鲍华喻祁蒲房滕屈饶解牟艾尤阳时穆农司卓古吉缪简车项连芦麦褚娄窦戚岑景党宫费卜冷晏席卫米柏宗瞿桂全佟应臧闵苟邬边卞姬师和仇栾隋商刁沙荣巫寇桑郎甄丛仲虞敖巩明佘池查麻苑迟邝';
   private static readonly PROFILE_REQUEST_GAP_MS: number = 350;
   private static readonly PROFILE_HOST_CANDIDATES: string[] = [
     'https://bbs.ngacn.cc',
@@ -212,6 +215,48 @@ export class NgaApi {
     return s;
   }
 
+  private decodeAnonymousDisplayName(raw: string): string {
+    const source = raw != null ? String(raw).trim() : '';
+    if (!(source.startsWith('#anony_') || source.startsWith('anony_')) || source.length < 18) {
+      return '';
+    }
+
+    let result = '';
+    let cursor = source.startsWith('#anony_') ? 6 : 5;
+    try {
+      for (let i = 0; i < 6; i++) {
+        let pos = 0;
+        if (i === 0 || i === 3) {
+          pos = parseInt(source.substring(cursor + 1, cursor + 2), 16);
+          if (!isFinite(pos) || isNaN(pos)) {
+            return '';
+          }
+          if (pos < 0) {
+            pos = 0;
+          } else if (pos >= NgaApi.ANONYMOUS_NAME_PREFIX.length) {
+            pos = NgaApi.ANONYMOUS_NAME_PREFIX.length - 1;
+          }
+          result += NgaApi.ANONYMOUS_NAME_PREFIX.charAt(pos);
+        } else {
+          pos = parseInt(source.substring(cursor, cursor + 2), 16);
+          if (!isFinite(pos) || isNaN(pos)) {
+            return '';
+          }
+          if (pos < 0) {
+            pos = 0;
+          } else if (pos >= NgaApi.ANONYMOUS_NAME_SUFFIX.length) {
+            pos = NgaApi.ANONYMOUS_NAME_SUFFIX.length - 1;
+          }
+          result += NgaApi.ANONYMOUS_NAME_SUFFIX.charAt(pos);
+        }
+        cursor += 2;
+      }
+    } catch (_error) {
+      return '';
+    }
+    return result;
+  }
+
   /**
    * 清洗昵称中的 HTML 标签与常见实体（接口有时会把 author 带标签返回）
    */
@@ -221,6 +266,10 @@ export class NgaApi {
     }
     let s = String(raw).replace(/<[^>]*>/g, '');
     s = this.decodeHtmlEntities(s);
+    const anonymousDecoded = this.decodeAnonymousDisplayName(s);
+    if (anonymousDecoded !== '') {
+      return anonymousDecoded;
+    }
     return s.trim();
   }
 
@@ -233,6 +282,9 @@ export class NgaApi {
     const s = this.sanitizeDisplayName(raw);
     if (s === '') {
       return false;
+    }
+    if (s === '0' || /^-\d+$/.test(s)) {
+      return true;
     }
     if (/[\u3400-\u9FFF]/.test(s) || /\s/.test(s) || /[\u00B7\u30FB]/.test(s)) {
       return false;
@@ -324,6 +376,35 @@ export class NgaApi {
       return '';
     }
     return String(Math.floor(n));
+  }
+
+  private extractAnonymousIdentity(source: Object | null | undefined): string {
+    if (source == null || source === '') {
+      return '';
+    }
+
+    if (typeof source === 'object') {
+      const obj = source as Record<string, Object>;
+      const candidates: (Object | null | undefined)[] = [obj['author'], obj['username'], obj['nickname']];
+      for (let i = 0; i < candidates.length; i++) {
+        const identity = this.extractAnonymousIdentity(candidates[i]);
+        if (identity !== '') {
+          return identity;
+        }
+      }
+      return '';
+    }
+
+    let text = String(source).replace(/<[^>]*>/g, '');
+    text = this.decodeHtmlEntities(text).trim();
+    if (text.startsWith('#anony_')) {
+      return text.substring(1);
+    }
+    if (text.startsWith('anony_')) {
+      return text;
+    }
+
+    return '';
   }
 
   private stripScriptPrefix(raw: string): string {
@@ -440,6 +521,28 @@ export class NgaApi {
     return preview.indexOf('<!doctype') >= 0 || preview.indexOf('<html') >= 0;
   }
 
+  private normalizeTidValue(raw: string): string {
+    const text = raw != null ? String(raw).trim() : '';
+    if (text === '') {
+      return '';
+    }
+    if (/^\d+$/.test(text)) {
+      return text;
+    }
+
+    const queryMatch = /(?:[?&#])tid=(\d+)/i.exec(text);
+    if (queryMatch != null) {
+      return queryMatch[1];
+    }
+
+    const looseMatch = /(?:^|[^0-9])(\d{5,})(?:[^0-9]|$)/.exec(text);
+    if (looseMatch != null) {
+      return looseMatch[1];
+    }
+
+    return text;
+  }
+
   private normalizeMessageJson(raw: string): string {
     let js = this.stripScriptPrefix(raw);
     const errorFillPos = js.indexOf('/*error fill content');
@@ -460,6 +563,25 @@ export class NgaApi {
     if (invalidStartPos >= 0 && invalidEndPos > invalidStartPos) {
       js = js.substring(0, invalidStartPos) + js.substring(invalidEndPos);
     }
+
+    return js;
+  }
+
+  private normalizeArticleJson(raw: string): string {
+    let js = this.stripScriptPrefix(raw);
+    const errorFillPos = js.indexOf('/*error fill content');
+    if (errorFillPos > 0) {
+      js = js.substring(0, errorFillPos);
+    }
+
+    js = js
+      .replace(/\/\*\$js\$\*\//g, '')
+      .replace(/"content":\+(\d+),/g, '"content":"+$1",')
+      .replace(/"subject":\+(\d+),/g, '"subject":"+$1",')
+      .replace(/"content":(0\d+),/g, '"content":"$1",')
+      .replace(/"subject":(0\d+),/g, '"subject":"$1",')
+      .replace(/"author":(0\d+),/g, '"author":"$1",')
+      .replace(/"alterinfo":"\[(\w|\s)+\]\s+",/g, '');
 
     return js;
   }
@@ -497,6 +619,11 @@ export class NgaApi {
         continue;
       }
 
+      if (inString && (code === 0x2028 || code === 0x2029)) {
+        result += code === 0x2028 ? '\\u2028' : '\\u2029';
+        continue;
+      }
+
       if (inString && code < 0x20) {
         switch (ch) {
           case '\t':
@@ -527,6 +654,139 @@ export class NgaApi {
     }
 
     return result;
+  }
+
+  private isHexDigit(ch: string): boolean {
+    return /^[0-9a-fA-F]$/.test(ch);
+  }
+
+  private normalizeJsonStringEscapes(raw: string): string {
+    if (raw == null || raw === '') {
+      return '';
+    }
+
+    let result = '';
+    let inString = false;
+
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw.charAt(i);
+
+      if (ch === '"') {
+        let slashCount = 0;
+        for (let j = i - 1; j >= 0 && raw.charAt(j) === '\\'; j--) {
+          slashCount++;
+        }
+        if (slashCount % 2 === 0) {
+          inString = !inString;
+        }
+        result += ch;
+        continue;
+      }
+
+      if (inString && ch === '\\') {
+        const next = i + 1 < raw.length ? raw.charAt(i + 1) : '';
+        if (next === '') {
+          result += '\\\\';
+          continue;
+        }
+
+        if (next === '\'') {
+          result += '\'';
+          i++;
+          continue;
+        }
+
+        if (next === 'x' &&
+          i + 3 < raw.length &&
+          this.isHexDigit(raw.charAt(i + 2)) &&
+          this.isHexDigit(raw.charAt(i + 3))) {
+          result += '\\u00' + raw.substring(i + 2, i + 4);
+          i += 3;
+          continue;
+        }
+
+        if (next === 'v') {
+          result += '\\u000b';
+          i++;
+          continue;
+        }
+
+        if (next === '0' && (i + 2 >= raw.length || !/[0-9]/.test(raw.charAt(i + 2)))) {
+          result += '\\u0000';
+          i++;
+          continue;
+        }
+
+        if (next === 'u' &&
+          i + 5 < raw.length &&
+          this.isHexDigit(raw.charAt(i + 2)) &&
+          this.isHexDigit(raw.charAt(i + 3)) &&
+          this.isHexDigit(raw.charAt(i + 4)) &&
+          this.isHexDigit(raw.charAt(i + 5))) {
+          result += '\\u' + raw.substring(i + 2, i + 6);
+          i += 5;
+          continue;
+        }
+
+        if ('"\\/bfnrt'.indexOf(next) >= 0) {
+          result += '\\' + next;
+          i++;
+          continue;
+        }
+
+        // Preserve stray backslashes like "\_" or "\[" as literal content.
+        result += '\\\\';
+        continue;
+      }
+
+      result += ch;
+    }
+
+    return result;
+  }
+
+  private previewAround(raw: string, center: number, radius: number = 120): string {
+    if (raw == null || raw === '') {
+      return '<empty>';
+    }
+    const safeCenter = Math.max(0, Math.min(center, raw.length));
+    const start = Math.max(0, safeCenter - radius);
+    const end = Math.min(raw.length, safeCenter + radius);
+    const prefix = start > 0 ? '...' : '';
+    const suffix = end < raw.length ? '...' : '';
+    return prefix + raw.substring(start, end) + suffix;
+  }
+
+  private describeJsonParseError(error: Object | null | undefined, raw: string): string {
+    let message = 'unknown';
+    if (error != null && typeof error === 'object') {
+      const errorObj = error as Record<string, Object>;
+      const name = errorObj['name'] != null ? String(errorObj['name']) : '';
+      const detail = errorObj['message'] != null ? String(errorObj['message']) : '';
+      message = detail !== '' ? detail : String(error);
+      if (name !== '' && message.indexOf(name) !== 0) {
+        message = name + ': ' + message;
+      }
+    } else if (error != null) {
+      message = String(error);
+    }
+    let position = -1;
+
+    const positionMatch = /position\s+(\d+)/i.exec(message);
+    if (positionMatch != null) {
+      position = Number(positionMatch[1]);
+    } else {
+      const columnMatch = /column\s+(\d+)/i.exec(message);
+      if (columnMatch != null) {
+        position = Math.max(0, Number(columnMatch[1]) - 1);
+      }
+    }
+
+    if (position < 0) {
+      return 'error=' + message;
+    }
+
+    return 'error=' + message + ', position=' + position + ', near=' + this.previewAround(raw, position);
   }
 
   private parseJsonObject(raw: string): Record<string, Object> | null {
@@ -906,8 +1166,15 @@ export class NgaApi {
     userMap: Map<string, Record<string, Object>>,
     userRecords: Record<string, Object>[],
     authorIdStr: string,
+    authorLookupKey: string,
     displayAuthor: string
   ): Record<string, Object> | null {
+    if (authorLookupKey !== '') {
+      const rawKeyRecord = userMap.get(authorLookupKey);
+      if (rawKeyRecord != null) {
+        return rawKeyRecord;
+      }
+    }
     if (authorIdStr !== '' && authorIdStr !== '0') {
       const r1 = userMap.get(authorIdStr);
       if (r1 != null) {
@@ -1403,15 +1670,19 @@ export class NgaApi {
         topic.fid = String(item['fid'] != null ? item['fid'] : '');
         topic.subject = item['subject'] != null ? this.decodeHtmlEntities(String(item['subject'])) : '';
         const topicAuthorRaw = item['author'] != null ? String(item['author']) : '';
-        topic.author.username = this.sanitizeDisplayName(topicAuthorRaw);
         const topicAid = item['authorid'] != null ? item['authorid'] : item['userid'];
+        topic.author.username = this.pickDisplayName(
+          topicAuthorRaw,
+          topicAid != null ? String(topicAid) : '',
+          ''
+        );
         topic.author.uid = this.positiveUidString(topicAid);
         topic.postDate = String(item['postdate'] != null ? item['postdate'] : '');
         topic.lastPostDate = String(item['lastpost'] != null ? item['lastpost'] : '');
         topic.replies = item['replies'] != null ? (item['replies'] as number) : 0;
         const lastPoster = item['lastposter'];
         if (lastPoster != null) {
-          topic.lastPoster = this.decodeHtmlEntities(String(lastPoster));
+          topic.lastPoster = this.sanitizeDisplayName(String(lastPoster));
         }
 
         list.topics.push(topic);
@@ -1431,16 +1702,39 @@ export class NgaApi {
    * 获取帖子详情
    */
   async getArticleList(tid: string, page: number): Promise<HttpResponse<ArticleList>> {
-    const url = this.baseUrl + '/read.php?tid=' + tid + '&page=' + page + '&__output=11&noprefix&v2';
-    console.info('getArticleList URL:', url);
+    const normalizedTid = this.normalizeTidValue(tid);
+    if (normalizedTid !== tid) {
+      LogUtils.w(NgaApi.LOG_TAG, 'getArticleList normalized tid from ' + tid + ' to ' + normalizedTid);
+    }
+    const url = this.baseUrl + '/read.php?tid=' + normalizedTid + '&page=' + page + '&__output=11&noprefix&v2';
+    LogUtils.i(NgaApi.LOG_TAG, 'getArticleList request tid=' + normalizedTid + ', page=' + page + ', url=' + url);
     const response = await this.http.get(url);
     const result = new HttpResponse<ArticleList>();
     result.code = response.code;
     result.message = response.message;
+    LogUtils.i(
+      NgaApi.LOG_TAG,
+      'getArticleList response tid=' + normalizedTid +
+      ', page=' + page +
+      ', code=' + response.code +
+      ', message=' + response.message +
+      ', rawPreview=' + this.previewRaw(response.raw)
+    );
 
     if (response.code === 200 && response.raw != null && response.raw !== '') {
       const parsed = this.parseArticleList(response.raw, page);
       result.data = parsed;
+      LogUtils.i(
+        NgaApi.LOG_TAG,
+        'getArticleList parsed tid=' + normalizedTid +
+        ', page=' + page +
+        ', subject=' + parsed.subject +
+        ', totalCount=' + parsed.totalCount +
+        ', totalPages=' + parsed.totalPages +
+        ', articles=' + parsed.articles.length +
+        ', hasMore=' + parsed.hasMore +
+        ', errorMsg=' + parsed.errorMsg
+      );
       if (parsed.errorMsg) {
         result.message = parsed.errorMsg;
       }
@@ -1452,6 +1746,13 @@ export class NgaApi {
         errorList.errorMsg = response.message || '服务器返回空数据';
       }
       result.data = errorList;
+      LogUtils.w(
+        NgaApi.LOG_TAG,
+        'getArticleList request failed tid=' + normalizedTid +
+        ', page=' + page +
+        ', code=' + response.code +
+        ', message=' + errorList.errorMsg
+      );
     }
     return result;
   }
@@ -1462,32 +1763,77 @@ export class NgaApi {
   private parseArticleList(jsonStr: string, currentPage: number): ArticleList {
     const list = new ArticleList();
     list.page = currentPage;
+    LogUtils.i(NgaApi.LOG_TAG, 'parseArticleList start page=' + currentPage + ', rawLength=' + jsonStr.length);
 
     try {
-      let js = jsonStr;
-      const jsPrefix = 'window.script_muti_get_var_store=';
-      if (js.indexOf(jsPrefix) === 0) {
-        js = js.substring(jsPrefix.length);
-      }
-      if (js.indexOf('/*') === 0) {
-        const endIdx = js.indexOf('*/');
-        if (endIdx > 0) {
-          js = js.substring(endIdx + 2);
-        }
-      }
+      const js = this.sanitizeJsonControlChars(this.normalizeArticleJson(jsonStr));
 
       let jsonObj: Record<string, Object>;
+      let parseSource = js;
       try {
-        jsonObj = JSON.parse(js) as Record<string, Object>;
-      } catch (_parseErr) {
-        console.error('JSON.parse failed, attempting truncated JSON recovery...');
-        const fixed = this.tryFixTruncatedJson(js);
-        if (fixed != null) {
-          console.info('Truncated JSON recovered, original=' + js.length + ' fixed=' + fixed.length);
-          jsonObj = JSON.parse(fixed) as Record<string, Object>;
+        jsonObj = JSON.parse(parseSource) as Record<string, Object>;
+      } catch (parseErr) {
+        LogUtils.w(
+          NgaApi.LOG_TAG,
+          'parseArticleList first parse failed, page=' + currentPage + ', ' +
+          this.describeJsonParseError(parseErr as Object, parseSource)
+        );
+
+        const repairedEscapes = this.normalizeJsonStringEscapes(parseSource);
+        if (repairedEscapes !== parseSource) {
+          try {
+            jsonObj = JSON.parse(repairedEscapes) as Record<string, Object>;
+            parseSource = repairedEscapes;
+            LogUtils.i(NgaApi.LOG_TAG, 'parseArticleList repaired invalid string escape, page=' + currentPage);
+          } catch (escapeErr) {
+            LogUtils.w(
+              NgaApi.LOG_TAG,
+              'parseArticleList escape repair failed, page=' + currentPage + ', ' +
+              this.describeJsonParseError(escapeErr as Object, repairedEscapes)
+            );
+            parseSource = repairedEscapes;
+            const fixed = this.tryFixTruncatedJson(repairedEscapes);
+            if (fixed != null) {
+              try {
+                jsonObj = JSON.parse(fixed) as Record<string, Object>;
+                parseSource = fixed;
+                LogUtils.i(NgaApi.LOG_TAG, 'parseArticleList repaired truncated json successfully, page=' + currentPage);
+              } catch (fixedErr) {
+                LogUtils.e(
+                  NgaApi.LOG_TAG,
+                  'parseArticleList repaired parse still failed, page=' + currentPage + ', ' +
+                  this.describeJsonParseError(fixedErr as Object, fixed)
+                );
+                list.errorMsg = '数据解析失败';
+                return list;
+              }
+            } else {
+              LogUtils.e(NgaApi.LOG_TAG, 'parseArticleList unable to repair json, page=' + currentPage);
+              list.errorMsg = '数据解析失败';
+              return list;
+            }
+          }
         } else {
-          list.errorMsg = '数据解析失败';
-          return list;
+          const fixed = this.tryFixTruncatedJson(parseSource);
+          if (fixed != null) {
+            try {
+              jsonObj = JSON.parse(fixed) as Record<string, Object>;
+              parseSource = fixed;
+              LogUtils.i(NgaApi.LOG_TAG, 'parseArticleList repaired truncated json successfully, page=' + currentPage);
+            } catch (fixedErr) {
+              LogUtils.e(
+                NgaApi.LOG_TAG,
+                'parseArticleList repaired parse still failed, page=' + currentPage + ', ' +
+                this.describeJsonParseError(fixedErr as Object, fixed)
+              );
+              list.errorMsg = '数据解析失败';
+              return list;
+            }
+          } else {
+            LogUtils.e(NgaApi.LOG_TAG, 'parseArticleList unable to repair json, page=' + currentPage);
+            list.errorMsg = '数据解析失败';
+            return list;
+          }
         }
       }
 
@@ -1500,14 +1846,19 @@ export class NgaApi {
 
       const data: Record<string, Object> = jsonObj['data'] as Record<string, Object>;
       if (data == null) {
+        LogUtils.e(NgaApi.LOG_TAG, 'parseArticleList missing data field, topKeys=' + Object.keys(jsonObj).join(','));
         list.errorMsg = '服务器返回数据为空';
         return list;
       }
+      const dataKeys = Object.keys(data);
 
       const tField: Object | null = data['__T'] as Object;
       const threadMeta = this.extractThreadDetailMeta(tField);
       let threadAuthorId = '';
       let threadAuthorName = '';
+      let threadAuthorAnonymousIdentity = '';
+      let threadAuthorLookupKey = '';
+      let threadAuthorDisplayRaw = '';
       if (threadMeta != null) {
         if (threadMeta['tid'] != null) {
           list.tid = String(threadMeta['tid']);
@@ -1518,10 +1869,26 @@ export class NgaApi {
         const ta = threadMeta['authorid'] != null ? threadMeta['authorid'] :
           (threadMeta['userid'] != null ? threadMeta['userid'] : threadMeta['posterid']);
         threadAuthorId = this.positiveUidString(ta);
-        if (threadMeta['author'] != null) {
-          threadAuthorName = this.sanitizeDisplayName(String(threadMeta['author']));
-        }
+        threadAuthorAnonymousIdentity = this.extractAnonymousIdentity(threadMeta);
+        threadAuthorLookupKey = threadAuthorAnonymousIdentity !== '' ?
+          threadAuthorAnonymousIdentity :
+          (ta != null ? String(ta) : '');
+        threadAuthorDisplayRaw = threadMeta['author'] != null ? String(threadMeta['author']) : '';
+        threadAuthorName = this.pickDisplayName(
+          threadAuthorDisplayRaw,
+          ta != null ? String(ta) : '',
+          ''
+        );
       }
+      const normalizedThreadAuthorName = this.sanitizeDisplayName(threadAuthorName);
+      LogUtils.i(
+        NgaApi.LOG_TAG,
+        'parseArticleList meta page=' + currentPage +
+        ', tid=' + list.tid +
+        ', subject=' + list.subject +
+        ', threadAuthorId=' + threadAuthorId +
+        ', dataKeys=' + dataKeys.join(',')
+      );
 
       const rows: number = data['__ROWS'] as number;
       const rowsPerPage: number = data['__R__ROWS_PAGE'] as number;
@@ -1545,6 +1912,10 @@ export class NgaApi {
                 const uidStr = String(uid);
                 userMap.set(uidStr, u);
               }
+              const anonymousIdentity = this.extractAnonymousIdentity(u);
+              if (anonymousIdentity !== '') {
+                userMap.set(anonymousIdentity, u);
+              }
               userRecords.push(u);
             }
           }
@@ -1561,9 +1932,40 @@ export class NgaApi {
               if (innerUid != null) {
                 userMap.set(String(innerUid), rec);
               }
+              const anonymousIdentity = this.extractAnonymousIdentity(rec);
+              if (anonymousIdentity !== '') {
+                userMap.set(anonymousIdentity, rec);
+              }
               userRecords.push(rec);
             }
           }
+        }
+      }
+
+      const threadUserInfo = this.findUserRecordForPost(
+        userMap,
+        userRecords,
+        threadAuthorId,
+        threadAuthorLookupKey,
+        threadAuthorDisplayRaw
+      );
+      if (threadUserInfo != null) {
+        const threadUid = this.positiveUidString(threadUserInfo['uid']);
+        if (threadAuthorId === '' && threadUid !== '') {
+          threadAuthorId = threadUid;
+        }
+        if (threadAuthorAnonymousIdentity === '') {
+          threadAuthorAnonymousIdentity = this.extractAnonymousIdentity(threadUserInfo);
+        }
+        const threadUserName = threadUserInfo['username'] != null ? String(threadUserInfo['username']) : '';
+        const threadNickname = threadUserInfo['nickname'] != null ? String(threadUserInfo['nickname']) : '';
+        const resolvedThreadAuthorName = this.pickDisplayName(
+          threadAuthorDisplayRaw,
+          threadNickname,
+          threadUserName !== '' ? threadUserName : (threadAuthorId !== '' ? threadAuthorId : '')
+        );
+        if (resolvedThreadAuthorName !== '') {
+          threadAuthorName = resolvedThreadAuthorName;
         }
       }
 
@@ -1591,6 +1993,15 @@ export class NgaApi {
             }
           }
         }
+        LogUtils.i(
+          NgaApi.LOG_TAG,
+          'parseArticleList rows page=' + currentPage +
+          ', totalRows=' + list.totalCount +
+          ', rowsPerPage=' + perPage +
+          ', rType=' + (Array.isArray(rField) ? 'array' : typeof rField) +
+          ', rItems=' + rItems.length +
+          ', userRecords=' + userRecords.length
+        );
 
         for (let i = 0; i < rItems.length; i++) {
           try {
@@ -1616,13 +2027,24 @@ export class NgaApi {
               (item['uid'] != null ? item['uid'] :
                 (item['posterid'] != null ? item['posterid'] : item['userid']));
             let authorIdStr = this.positiveUidString(idFromPost);
+            let authorAnonymousIdentity = this.extractAnonymousIdentity(item);
+            const authorLookupKey = authorAnonymousIdentity !== '' ?
+              authorAnonymousIdentity :
+              (idFromPost != null ? String(idFromPost) : '');
             const directAuthorRaw = item['author'] != null ? String(item['author']) : '';
             const directAuthor = this.sanitizeDisplayName(directAuthorRaw);
+            const authorIdDisplayCandidate = idFromPost != null ? String(idFromPost) : '';
             let userNameCandidate = '';
             let userNicknameCandidate = '';
             let userAvatarCandidate = '';
 
-            const userInfo = this.findUserRecordForPost(userMap, userRecords, authorIdStr, directAuthor);
+            const userInfo = this.findUserRecordForPost(
+              userMap,
+              userRecords,
+              authorIdStr,
+              authorLookupKey,
+              directAuthor
+            );
             if (userInfo != null) {
               const innerUid = userInfo['uid'];
               if (innerUid != null) {
@@ -1643,11 +2065,18 @@ export class NgaApi {
               if (avatar != null && String(avatar) !== '') {
                 userAvatarCandidate = String(avatar);
               }
+              if (authorAnonymousIdentity === '') {
+                authorAnonymousIdentity = this.extractAnonymousIdentity(userInfo);
+              }
             }
             if (authorIdStr !== '') {
               article.author.uid = authorIdStr;
             }
-            const resolvedAuthorName = this.pickDisplayName(directAuthor, userNicknameCandidate, userNameCandidate);
+            const resolvedAuthorName = this.pickDisplayName(
+              directAuthor,
+              userNicknameCandidate,
+              userNameCandidate !== '' ? userNameCandidate : authorIdDisplayCandidate
+            );
             if (resolvedAuthorName !== '') {
               article.author.username = resolvedAuthorName;
             }
@@ -1665,8 +2094,17 @@ export class NgaApi {
               }
             }
 
-            // 判断是否为楼主
-            if (threadAuthorId !== '' && article.author.uid === threadAuthorId) {
+            // 判断是否为楼主。匿名楼主没有稳定 UID 时，退化为按解析后的显示名识别。
+            const normalizedArticleAuthorName = this.sanitizeDisplayName(article.author.username);
+            const sameAuthorByUid = threadAuthorId !== '' && article.author.uid === threadAuthorId;
+            const sameAuthorByAnonymousIdentity = threadAuthorAnonymousIdentity !== '' &&
+              authorAnonymousIdentity !== '' &&
+              authorAnonymousIdentity === threadAuthorAnonymousIdentity;
+            const sameAuthorByName = normalizedThreadAuthorName !== '' &&
+              normalizedArticleAuthorName !== '' &&
+              normalizedArticleAuthorName === normalizedThreadAuthorName &&
+              (threadAuthorId === '' || article.author.uid === '' || article.author.uid === '0');
+            if (sameAuthorByAnonymousIdentity || sameAuthorByUid || sameAuthorByName) {
               article.isAuthor = true;
             } else if (isFirstPost) {
               // 第一楼肯定是楼主
@@ -1690,15 +2128,49 @@ export class NgaApi {
 
             list.articles.push(article);
           } catch (itemErr) {
-            console.error('Parse article item ' + i + ' failed:', itemErr);
+            LogUtils.e(
+              NgaApi.LOG_TAG,
+              'parseArticleList item failed page=' + currentPage +
+              ', index=' + i +
+              ', itemKeys=' + Object.keys(rItems[i]).join(',') +
+              ', err=' + JSON.stringify(itemErr)
+            );
           }
         }
+      } else {
+        LogUtils.w(
+          NgaApi.LOG_TAG,
+          'parseArticleList missing __R page=' + currentPage +
+          ', tid=' + list.tid +
+          ', dataKeys=' + dataKeys.join(',')
+        );
       }
 
       list.hasMore = currentPage < list.totalPages;
+      if (list.articles.length === 0) {
+        LogUtils.w(
+          NgaApi.LOG_TAG,
+          'parseArticleList empty articles page=' + currentPage +
+          ', tid=' + list.tid +
+          ', subject=' + list.subject +
+          ', totalCount=' + list.totalCount +
+          ', totalPages=' + list.totalPages +
+          ', dataKeys=' + dataKeys.join(',')
+        );
+      } else {
+        LogUtils.i(
+          NgaApi.LOG_TAG,
+          'parseArticleList finish page=' + currentPage +
+          ', tid=' + list.tid +
+          ', articles=' + list.articles.length +
+          ', firstPid=' + list.articles[0].pid +
+          ', firstFloor=' + list.articles[0].floor
+        );
+      }
     } catch (err) {
       console.error('Parse article list failed:', err);
       console.error('Raw response (first 500 chars):', jsonStr.substring(0, 500));
+      LogUtils.e(NgaApi.LOG_TAG, 'parseArticleList exception page=' + currentPage + ', err=' + JSON.stringify(err));
       list.errorMsg = '内容解析失败';
     }
 

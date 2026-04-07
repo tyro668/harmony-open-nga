@@ -1137,28 +1137,49 @@ struct MainPage {
   ProfileContent() {
     Column() {
       if (this.user == null || !this.user.isLoggedIn()) {
-        // 未登录
-        Column() {
-          Stack() {
-            Circle().width(100).height(100).fill(ThemeColors.PRIMARY_LIGHT)
-            Text('\u{1F464}').fontSize(44)
+        Scroll() {
+          Column() {
+            // 未登录
+            Column() {
+              Stack() {
+                Circle().width(100).height(100).fill(ThemeColors.PRIMARY_LIGHT)
+                Text('\u{1F464}').fontSize(44)
+              }
+              Text('登录发现更多精彩')
+                .fontSize(FontSize.MEDIUM)
+                .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
+                .margin({ top: 20 })
+              Button('登录 / 注册')
+                .fontSize(FontSize.MEDIUM)
+                .fontColor('#FFFFFF')
+                .backgroundColor(ThemeColors.PRIMARY)
+                .borderRadius(BorderRadius.EXTRA_LARGE)
+                .width(200)
+                .height(44)
+                .margin({ top: 24 })
+                .onClick(() => { router.pushUrl({ url: 'pages/login/LoginPage' }); })
+            }
+            .width('100%')
+            .padding({ top: 48, bottom: 32 })
+            .alignItems(HorizontalAlign.Center)
+
+            Column() {
+              this.ProfileMenuItem('\u{1F9EA}', '调试', () => {
+                router.pushUrl({ url: 'pages/debug/DebugToolsPage' });
+              })
+            }
+            .width('100%')
+            .backgroundColor(ThemeColors.CARD_BG)
+            .borderRadius(BorderRadius.MEDIUM)
+            .margin({ left: 16, right: 16 })
+            .shadow({ radius: 4, color: '#0000000A', offsetX: 0, offsetY: 2 })
+
+            Blank().height(30)
           }
-          Text('登录发现更多精彩')
-            .fontSize(FontSize.MEDIUM)
-            .fontColor(ThemeColors.TEXT_SECONDARY_LIGHT)
-            .margin({ top: 20 })
-          Button('登录 / 注册')
-            .fontSize(FontSize.MEDIUM)
-            .fontColor('#FFFFFF')
-            .backgroundColor(ThemeColors.PRIMARY)
-            .borderRadius(BorderRadius.EXTRA_LARGE)
-            .width(200)
-            .height(44)
-            .margin({ top: 24 })
-            .onClick(() => { router.pushUrl({ url: 'pages/login/LoginPage' }); })
         }
         .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .backgroundColor(ThemeColors.BACKGROUND_LIGHT)
       } else {
         Scroll() {
@@ -1229,6 +1250,10 @@ struct MainPage {
             Column() {
               this.ProfileMenuItem('\u{2699}\u{FE0F}', '设置', () => {
                 router.pushUrl({ url: 'pages/settings/SettingsPage' });
+              })
+              Divider().color(ThemeColors.DIVIDER_LIGHT).margin({ left: 52 })
+              this.ProfileMenuItem('\u{1F9EA}', '调试', () => {
+                router.pushUrl({ url: 'pages/debug/DebugToolsPage' });
               })
             }
             .width('100%')
